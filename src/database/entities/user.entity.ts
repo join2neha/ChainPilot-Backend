@@ -15,21 +15,24 @@ export enum UserLevel {
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
-  id?: string;
+  id: string;
 
   @Column({ unique: true })
-  walletAddress?: string;
+  walletAddress: string;
 
   @Column({
     type: 'enum',
     enum: UserLevel,
     default: UserLevel.BEGINNER,
   })
-  level?: UserLevel;
+  level: UserLevel;
+
+  @Column({ type: 'text', nullable: true })
+  refreshTokenHash!: string | null;
 
   @CreateDateColumn()
-  createdAt?: Date;
+  createdAt: Date;
 
   @UpdateDateColumn()
-  updatedAt?: Date;
+  updatedAt: Date;
 }
