@@ -1,98 +1,212 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# 🚀 ChainPilot - Your AI Co-Pilot for On-Chain Decisions
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+ChainPilot is an AI-powered portfolio assistant that connects to a user’s crypto wallet, analyzes on-chain behavior, understands market conditions, and generates **explainable trading decisions**.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Built with focuses on **clarity, intelligence, and transparency** - not black-box predictions.
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## What Problem Are We Solving?
 
-## Project setup
+Crypto users often struggle with:
 
-```bash
-$ npm install
+* Understanding their own trading behavior
+* Interpreting market signals
+* Making informed buy/sell decisions
+* Trusting opaque AI tools
+
+👉 ChainPilot solves this by acting as an **intelligent, explainable assistant** that:
+
+* Understands the user
+* Understands the market
+* Explains every decision clearly
+
+---
+
+## Features
+
+### Wallet Intelligence
+
+* Connect wallet (address-based)
+* Analyze transaction behavior
+* Classify users into:
+
+  * Beginner
+  * Intermediate
+  * Advanced
+
+---
+
+### Market Awareness
+
+* Fetch token price data
+* Derive simple indicators (RSI-like logic)
+* Identify:
+
+  * Overbought conditions
+  * Oversold conditions
+
+---
+
+### AI Decision Engine (Core)
+
+* Generates: **BUY / SELL / HOLD**
+* Based on:
+
+  * User experience level
+  * Market conditions
+* Outputs:
+
+  * Action
+  * Confidence score
+  * Human-readable reasoning
+
+---
+
+### Explainable AI Interface
+
+* Chat-like responses
+* Transparent reasoning (no black box)
+
+Example:
+
+> “I'm seeing oversold conditions - this could be a good entry point.
+> Since you're a beginner, I’m suggesting a cautious BUY.”
+
+---
+
+### AI-Assisted Trade Execution
+
+* User-approved execution (not autonomous)
+* Mock or real blockchain interaction
+
+---
+
+### Decision Memory (On-chain Inspired)
+
+* Every decision is stored
+* Enables:
+
+  * History tracking
+  * Transparency
+  * AI “memory” simulation
+
+---
+
+## System Architecture
+
+```text
+Frontend (Chat UI)
+        ↓
+Backend (NestJS)
+
+Modules:
+- Wallet Service → Analyze user
+- Market Service → Fetch data
+- AI Engine → Generate decisions
+- Trade Service → Execute trades
+- History Service → Store decisions
 ```
 
-## Compile and run the project
+---
 
-```bash
-# development
-$ npm run start
+## Tech Stack
 
-# watch mode
-$ npm run start:dev
+* **Backend:** NestJS
+* **Database:** PostgreSQL
+* **Cache:** Redis
+* **Web3:** ethers.js
+* **Storage:** 0G
 
-# production mode
-$ npm run start:prod
+<!-- ---
+
+## 🔌 API Endpoints
+
+### 1. Connect Wallet
+
+```
+POST /wallet/connect
 ```
 
-## Run tests
+### 2. Get AI Decision ⭐
 
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+```
+POST /ai/decision
 ```
 
-## Deployment
+### 3. Execute Trade
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```
+POST /trade/execute
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### 4. Get Decision History
 
-## Resources
+```
+GET /history/:wallet
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+--- -->
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## AI Decision Logic
 
-## Support
+* Beginner:
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+  * RSI LOW → BUY
+  * RSI HIGH → HOLD
 
-## Stay in touch
+* Advanced:
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+  * RSI HIGH → SELL
+  * RSI LOW → BUY
 
-## License
+👉 All decisions include reasoning + confidence.
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+---
+
+## Getting Started
+
+### 1. Clone the repo
+
+```
+git clone https://github.com/join2neha/ChainPilot-Backend
+cd ChainPilot-Backend
+```
+
+### 2. Install dependencies
+
+```
+npm install
+```
+
+### 3. Run the server
+
+```
+npm run start:dev
+```
+
+---
+
+<!-- ## 🔮 Future Enhancements
+
+* Real on-chain data analysis (via ethers.js)
+* Advanced indicators (MACD, volatility)
+* Personalized risk scoring
+* Fully decentralized decision storage
+* Autonomous trading agents (with safeguards) -->
+
+<!-- --- -->
+
+## Why ChainPilot Stands Out
+
+* Explainable AI (not black-box)
+* Web3-native design
+* User-personalized decisions
+* Combines user behavior + market data
+* Transparent decision history
+
+---
+
+## 👩‍💻 Author
+
+Built with ❤️ by Team ChainPilot (Neha Verma & Akshay Tiwari).
