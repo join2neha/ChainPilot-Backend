@@ -13,7 +13,7 @@ export class WalletService {
         private readonly jwtService: JwtService,
     ) { }
 
-    async analyzeWallet(walletAddress: string) {
+    async walletConnect(walletAddress: string) {
         const normalizedAddress = walletAddress.toLowerCase().trim();
 
         let user = await this.userRepository.findOne({
