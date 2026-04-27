@@ -1,7 +1,9 @@
-import { Body, Controller, Post } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { WalletService } from './wallet.service';
 import { walletConnectDto } from './dto/wallet-connect.dto';
+import { AccessTokenGuard } from 'src/common/guards/access-token.guard';
+import { AnalyzeWalletDto } from './dto/analyze-wallet.dto';
 
 @ApiTags('wallet')
 @Controller('wallet')
@@ -13,5 +15,13 @@ export class WalletController {
     @ApiResponse({ status: 201, description: 'Wallet connect and tokens generated' })
     walletConnect(@Body() dto: walletConnectDto) {
         return this.walletService.walletConnect(dto.walletAddress);
+    }
+
+    @Get('analyze-wallet')
+    @UseGuards(AccessTokenGuard)
+    @ApiBearerAuth('access-token')
+    @ApiOperation({ summary: 'Analyze authenticated user wallet via Alchemy' })
+    analyzeWalletDetails(@Req() req: Request & { user: { sub: string } }) {
+        return this.walletService.analyzeWalletDetails(req.user.sub);
     }
 }
