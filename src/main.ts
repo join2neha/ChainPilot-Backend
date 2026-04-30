@@ -8,6 +8,11 @@ async function bootstrap() {
 
   app.enableCors();
 
+  //Fix favicon error (IMPORTANT for Vercel)
+  app.getHttpAdapter().get('/favicon.ico', (req, res) => {
+    res.status(204).send();
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
