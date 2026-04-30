@@ -5,13 +5,15 @@ import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { RedisModule } from './config/redis.module';
+import { AgentModule } from './modules/agent/agent.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     DatabaseModule,
     WalletModule,
-    RedisModule
+    RedisModule,
+    AgentModule
   ],
   controllers: [AppController],
   providers: [AppService],

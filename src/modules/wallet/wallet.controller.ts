@@ -36,8 +36,8 @@ export class WalletController {
 
 
     @Get('global-market')
-    @UseGuards(AccessTokenGuard) 
-    @ApiBearerAuth('access-token')
+    // @UseGuards(AccessTokenGuard) 
+    // @ApiBearerAuth('access-token')
     getGlobalMarket() {
         return this.walletService.getGlobalMarketData();
     }
