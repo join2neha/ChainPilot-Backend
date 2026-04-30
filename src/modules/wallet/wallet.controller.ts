@@ -2,7 +2,7 @@ import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { WalletService } from './wallet.service';
 import { walletConnectDto } from './dto/wallet-connect.dto';
-import { AccessTokenGuard } from 'src/common/guards/access-token.guard';
+import { AccessTokenGuard } from '../../common/guards/access-token.guard'
 import { AnalyzeWalletDto } from './dto/analyze-wallet.dto';
 
 @ApiTags('wallet')

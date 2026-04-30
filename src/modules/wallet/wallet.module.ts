@@ -3,9 +3,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { WalletService } from './wallet.service';
 import { WalletController } from './wallet.controller';
-import { User } from 'src/database/entities/user.entity';
+import { User } from '../../database/entities/user.entity'
 import { AuthModule } from '../auth/auth.module';
-import { Web3Module } from 'src/config/web3.module';
+import { Web3Module } from '../../config/web3.module'
 
 @Module({
   imports: [
