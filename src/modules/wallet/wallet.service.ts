@@ -3,9 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
-import { User, UserLevel } from 'src/database/entities/user.entity';
+import { User, UserLevel } from '../../database/entities/user.entity'
 import { AssetTransfersCategory } from '../../common/constants/constants';
-import { Web3Service } from 'src/config/web3.service';
+import { Web3Service } from '../../config/web3.service'
 import Redis from 'ioredis';
 
 
