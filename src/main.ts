@@ -28,6 +28,11 @@ async function bootstrap() {
     swaggerOptions: {
       url: '/api-docs-json',
     },
+    customCssUrl: 'https://unpkg.com/swagger-ui-dist@4/swagger-ui.css',
+    customJs: [
+      'https://unpkg.com/swagger-ui-dist@4/swagger-ui-bundle.js',
+      'https://unpkg.com/swagger-ui-dist@4/swagger-ui-standalone-preset.js',
+    ],
   });
 
   app.getHttpAdapter().get('/api-docs-json', (req, res) => {
@@ -36,7 +41,6 @@ async function bootstrap() {
 
   await app.init();
 
-  // keep listen for local
   if (process.env.NODE_ENV !== 'production') {
     await app.listen(process.env.PORT ?? 3001);
   }
