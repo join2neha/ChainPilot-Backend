@@ -383,4 +383,27 @@ export class WalletService {
             this.handleServiceError(error, 'Wallet analyze');
         }
     }
+
+    async logout(userId: string) {
+        try {
+            const user = await this.userRepository.findOne({ where: { id: userId } });
+            if (!user) {
+                throw new NotFoundException('User not found');
+            }
+
+            // Invalidate refresh session
+            await this.userRepository.update(user.id, { refreshTokenHash: null });
+
+            //clear cached wallet analysis
+            const cacheKey = `wallet:analyze:${user.id}:${user.walletAddress.toLowerCase()}`;
+            await this.del(cacheKey);
+
+            return {
+                success: true,
+                message: 'Logged out successfully',
+            };
+        } catch (error) {
+            this.handleServiceError(error, 'Wallet logout');
+        }
+    }
 }
