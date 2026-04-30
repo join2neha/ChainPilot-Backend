@@ -427,10 +427,6 @@ export class WalletService {
 
             if (!response.ok) {
                 const errorText = await response.text();
-
-                console.log("-----> errorText",errorText);
-
-                console.log("-----> response", response);
                 this.logger.error(
                     `CoinGecko global API failed: ${response.status} ${errorText}`,
                 );
@@ -444,7 +440,6 @@ export class WalletService {
                 data,
             };
         } catch (error) {
-            console.log("-----> error", error);
             this.handleServiceError(error, 'Get global market data');
         }
     }
