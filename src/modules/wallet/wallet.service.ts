@@ -4,7 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
 import { User, UserLevel } from 'src/database/entities/user.entity';
-import { AssetTransfersCategory } from 'src/common/constants/constants';
+import { AssetTransfersCategory } from '../../common/constants/constants';
 import { Web3Service } from 'src/config/web3.service';
 import Redis from 'ioredis';
 
