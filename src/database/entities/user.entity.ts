@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -11,6 +12,8 @@ export enum UserLevel {
   INTERMEDIATE = 'INTERMEDIATE',
   ADVANCED = 'ADVANCED',
 }
+
+import { WalletAnalysis } from './wallet-analysis.entity';
 
 @Entity('users')
 export class User {
@@ -29,6 +32,9 @@ export class User {
 
   @Column({ type: 'text', nullable: true })
   refreshTokenHash!: string | null;
+
+  @OneToMany(() => WalletAnalysis, (analysis) => analysis.user)
+  walletAnalyses!: WalletAnalysis[];
 
   @CreateDateColumn()
   createdAt: Date;

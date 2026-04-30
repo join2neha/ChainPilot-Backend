@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { User, UserLevel } from '../../database/entities/user.entity'
 import { AssetTransfersCategory } from '../../common/constants/constants';
 import { Web3Service } from '../../config/web3.service'
+import { WalletAnalysis } from '../../database/entities/wallet-analysis.entity';
 import Redis from 'ioredis';
 
 
@@ -34,6 +35,8 @@ export class WalletService {
         private readonly jwtService: JwtService,
         private readonly web3Service: Web3Service,
         @Inject('REDIS_CLIENT') private readonly redis: Redis,
+        @InjectRepository(WalletAnalysis)
+        private readonly walletAnalysisRepository: Repository<WalletAnalysis>,
     ) { }
 
     private readonly logger = new Logger(WalletService.name);
@@ -377,6 +380,32 @@ export class WalletService {
             };
 
             await this.set(cacheKey, result, 300);
+
+            const analysis = this.walletAnalysisRepository.create({
+                userId: user.id,
+                walletAddress: address,
+                winRate,
+                riskScore: risk,
+                behaviorType: behavior,
+                avgHoldTimeDays: avgHold,
+                tradeFrequency: frequency,
+                walletHealthScore: health,
+                totalTransactions,
+                uniqueTokens,
+                walletLevel: walletLevel as 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED',
+                insight,
+                rawData: {
+                    incomingCount: incoming.transfers.length,
+                    outgoingCount: outgoing.transfers.length,
+                    generatedAt: new Date().toISOString(),
+                },
+            });
+            await this.walletAnalysisRepository.save(analysis);
+            
+            // keep users table in sync with latest analyzed level
+            await this.userRepository.update(user.id, {
+                level: walletLevel as UserLevel,
+            });
 
             return result;
         } catch (error) {
