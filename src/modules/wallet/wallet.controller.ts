@@ -33,5 +33,13 @@ export class WalletController {
     logout(@Req() req: Request & { user: { sub: string } }) {
         return this.walletService.logout(req.user.sub);
     }
-    
+
+
+    @Get('global-market')
+    @UseGuards(AccessTokenGuard) 
+    @ApiBearerAuth('access-token')
+    getGlobalMarket() {
+        return this.walletService.getGlobalMarketData();
+    }
+
 }

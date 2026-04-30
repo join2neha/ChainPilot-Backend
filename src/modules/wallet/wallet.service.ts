@@ -406,4 +406,46 @@ export class WalletService {
             this.handleServiceError(error, 'Wallet logout');
         }
     }
+
+    async getGlobalMarketData() {
+        try {
+            const baseUrl = process.env.COINGECKO_BASE_URL;
+            const apiKey = process.env.COINGECKO_API_KEY;
+
+            if (!baseUrl || !apiKey) {
+                throw new InternalServerErrorException(
+                    'CoinGecko env config is missing',
+                );
+            }
+
+            const response = await fetch(`${baseUrl}/global`, {
+                method: 'GET',
+                headers: {
+                    'x_cg_demo_api_key': apiKey,
+                },
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+
+                console.log("-----> errorText",errorText);
+
+                console.log("-----> response", response);
+                this.logger.error(
+                    `CoinGecko global API failed: ${response.status} ${errorText}`,
+                );
+                throw new InternalServerErrorException('Failed to fetch global market data');
+            }
+
+            const data = await response.json();
+
+            return {
+                success: true,
+                data,
+            };
+        } catch (error) {
+            console.log("-----> error", error);
+            this.handleServiceError(error, 'Get global market data');
+        }
+    }
 }
