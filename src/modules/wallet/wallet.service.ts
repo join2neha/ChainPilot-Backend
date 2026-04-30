@@ -90,6 +90,9 @@ export class WalletService {
             const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
             await this.userRepository.update(user.id, { refreshTokenHash });
 
+            const cacheKey = `wallet:analyze:${user.id}:${user.walletAddress.toLowerCase()}`;
+            await this.del(cacheKey);
+
             return {
                 success: true,
                 data: {
@@ -297,6 +300,16 @@ export class WalletService {
             if (!user) throw new NotFoundException('User not found');
             const address = user.walletAddress.toLowerCase();
 
+            const cacheKey = `wallet:analyze:${user.id}:${address}`;
+            // 1) Try cache first
+            const cached = await this.get<any>(cacheKey);
+            if (cached) {
+                return {
+                    ...cached,
+                    cache: true,
+                };
+            }
+
             const alchemy = this.web3Service.alchemy;
 
             const [incoming, outgoing] = await Promise.all([
@@ -346,24 +359,51 @@ export class WalletService {
                 frequency
             );
 
-            return {
+            const result = {
                 win_rate: winRate,
                 risk_score: risk,
                 behavior_type: behavior,
                 avg_hold_time_days: avgHold,
                 trade_frequency: frequency,
                 wallet_health_score: health,
-
                 metrics: {
                     totalTransactions,
                     uniqueTokens,
                 },
-
                 wallet_level: walletLevel,
                 insight,
+                cache: false,
+                generatedAt: new Date().toISOString(),
             };
+
+            await this.set(cacheKey, result, 300);
+
+            return result;
         } catch (error) {
             this.handleServiceError(error, 'Wallet analyze');
+        }
+    }
+
+    async logout(userId: string) {
+        try {
+            const user = await this.userRepository.findOne({ where: { id: userId } });
+            if (!user) {
+                throw new NotFoundException('User not found');
+            }
+
+            // Invalidate refresh session
+            await this.userRepository.update(user.id, { refreshTokenHash: null });
+
+            //clear cached wallet analysis
+            const cacheKey = `wallet:analyze:${user.id}:${user.walletAddress.toLowerCase()}`;
+            await this.del(cacheKey);
+
+            return {
+                success: true,
+                message: 'Logged out successfully',
+            };
+        } catch (error) {
+            this.handleServiceError(error, 'Wallet logout');
         }
     }
 }

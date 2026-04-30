@@ -24,4 +24,14 @@ export class WalletController {
     analyzeWalletDetails(@Req() req: Request & { user: { sub: string } }) {
         return this.walletService.analyzeWalletDetails(req.user.sub);
     }
+
+    @Post('logout')
+    @UseGuards(AccessTokenGuard)
+    @ApiBearerAuth('access-token')
+    @ApiOperation({ summary: 'Logout wallet session' })
+    @ApiResponse({ status: 200, description: 'Session logged out successfully' })
+    logout(@Req() req: Request & { user: { sub: string } }) {
+        return this.walletService.logout(req.user.sub);
+    }
+    
 }
