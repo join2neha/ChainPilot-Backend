@@ -1,4 +1,4 @@
-import { HttpException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { HttpException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { User, UserLevel } from 'src/database/entities/user.entity';
 import { AssetTransfersCategory } from 'src/common/constants/constants';
 import { Web3Service } from 'src/config/web3.service';
+import Redis from 'ioredis';
 
 
 type Trade = {
@@ -17,12 +18,12 @@ type Trade = {
 };
 
 type Transfer = {
-  asset?: string;
-  value?: number | string;
-  metadata: {
-    blockTimestamp: string;
-  };
-  type: 'IN' | 'OUT';
+    asset?: string;
+    value?: number | string;
+    metadata: {
+        blockTimestamp: string;
+    };
+    type: 'IN' | 'OUT';
 };
 
 @Injectable()
@@ -32,6 +33,7 @@ export class WalletService {
         private readonly userRepository: Repository<User>,
         private readonly jwtService: JwtService,
         private readonly web3Service: Web3Service,
+        @Inject('REDIS_CLIENT') private readonly redis: Redis,
     ) { }
 
     private readonly logger = new Logger(WalletService.name);
@@ -274,6 +276,19 @@ export class WalletService {
         }
 
         return "Wallet shows balanced activity with steady participation.";
+    }
+
+    async set(key: string, value: any, ttl = 60) {
+        await this.redis.set(key, JSON.stringify(value), 'EX', ttl);
+    }
+
+    async get<T>(key: string): Promise<T | null> {
+        const data = await this.redis.get(key);
+        return data ? JSON.parse(data) : null;
+    }
+
+    async del(key: string) {
+        await this.redis.del(key);
     }
 
     async analyzeWalletDetails(userId: string) {
