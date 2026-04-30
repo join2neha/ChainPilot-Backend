@@ -6,13 +6,6 @@ import { ValidationPipe } from '@nestjs/common';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.enableCors();
-
-  //Fix favicon error (IMPORTANT for Vercel)
-  app.getHttpAdapter().get('/favicon.ico', (req, res) => {
-    res.status(204).send();
-  });
-
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -28,27 +21,8 @@ async function bootstrap() {
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api-docs', app, document);
 
-  SwaggerModule.setup('api-docs', app, document, {
-    swaggerOptions: {
-      url: '/api-docs-json',
-    },
-    customCssUrl: 'https://unpkg.com/swagger-ui-dist@4/swagger-ui.css',
-    customJs: [
-      'https://unpkg.com/swagger-ui-dist@4/swagger-ui-bundle.js',
-      'https://unpkg.com/swagger-ui-dist@4/swagger-ui-standalone-preset.js',
-    ],
-  });
-
-  app.getHttpAdapter().get('/api-docs-json', (req, res) => {
-    res.json(document);
-  });
-
-  await app.init();
-
-  if (process.env.NODE_ENV !== 'production') {
-    await app.listen(process.env.PORT ?? 3001);
-  }
+  await app.listen(process.env.PORT ?? 3001);
 }
-
 bootstrap();
