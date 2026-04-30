@@ -11,16 +11,17 @@ import { User } from './entities/user.entity';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
-        host: config.get<string>('DB_HOST'),
-        port: Number(config.get<string>('DB_PORT', '5432')),
-        username: config.get<string>('DB_USER'),
-        password: config.get<string>('DB_PASSWORD'),
-        database: config.get<string>('DB_NAME'),
+        url: config.get<string>('SUPABASE_DB_URL'),
         entities: [User],
         synchronize: true,
-        logging: false,
+        ssl: {
+          rejectUnauthorized: false,
+        },
+        extra: {
+          max: 5,
+        },
       }),
-    }),
+    })
   ],
 })
-export class DatabaseModule {}
+export class DatabaseModule { }
