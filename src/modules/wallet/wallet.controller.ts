@@ -25,6 +25,15 @@ export class WalletController {
         return this.walletService.analyzeWalletDetails(req.user.sub);
     }
 
+    @Get('portfolio-summary')
+    @UseGuards(AccessTokenGuard)
+    @ApiBearerAuth('access-token')
+    @ApiOperation({ summary: 'Get wallet token holdings and current values' })
+    @ApiResponse({ status: 200, description: 'Portfolio summary fetched' })
+    getPortfolioSummary(@Req() req: Request & { user: { sub: string } }) {
+        return this.walletService.getPortfolioSummary(req.user.sub);
+    }
+
     @Post('logout')
     @UseGuards(AccessTokenGuard)
     @ApiBearerAuth('access-token')

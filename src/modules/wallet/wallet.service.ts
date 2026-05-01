@@ -27,6 +27,18 @@ type Transfer = {
     type: 'IN' | 'OUT';
 };
 
+type TokenRow = {
+    contractAddress: string | null;
+    symbol: string;
+    name: string;
+    decimals: number;
+    quantity: number;
+    currentPriceUsd: number;
+    currentValueUsd: number;
+    allocationPercent: number;
+};
+
+
 @Injectable()
 export class WalletService {
     constructor(
@@ -315,6 +327,34 @@ export class WalletService {
 
             const alchemy = this.web3Service.alchemy;
 
+            const tokenBalancesRes = await alchemy.core.getTokenBalances(address);
+
+            const nonZeroTokenBalances = tokenBalancesRes.tokenBalances.filter(
+                (t) => t.tokenBalance && t.tokenBalance !== '0x0' && t.tokenBalance !== '0x',
+            );
+
+            const tokenHoldings = await Promise.all(
+                nonZeroTokenBalances.map(async (t) => {
+                    const metadata = await alchemy.core.getTokenMetadata(t.contractAddress);
+                    const decimals = metadata.decimals ?? 18;
+                    const raw = t.tokenBalance ?? '0x0';
+                    const rawBigInt = BigInt(raw);
+                    const normalized =
+                        Number(rawBigInt) / Math.pow(10, decimals); // MVP-friendly
+                    return {
+                        contractAddress: t.contractAddress,
+                        symbol: metadata.symbol ?? 'UNKNOWN',
+                        name: metadata.name ?? 'Unknown Token',
+                        decimals,
+                        rawBalance: rawBigInt.toString(),
+                        balance: normalized,
+                        logo: metadata.logo ?? null,
+                    };
+                }),
+            );
+
+            const tokenHoldingCount = tokenHoldings.length;
+
             const [incoming, outgoing] = await Promise.all([
                 alchemy.core.getAssetTransfers({
                     fromBlock: "0x0",
@@ -372,7 +412,9 @@ export class WalletService {
                 metrics: {
                     totalTransactions,
                     uniqueTokens,
+                    tokenHoldingCount
                 },
+                holdings: tokenHoldings,
                 wallet_level: walletLevel,
                 insight,
                 cache: false,
@@ -410,6 +452,248 @@ export class WalletService {
             return result;
         } catch (error) {
             this.handleServiceError(error, 'Wallet analyze');
+        }
+    }
+
+    private formatUnits(raw: string, decimals: number): number {
+        const value = BigInt(raw || '0x0');
+        const base = 10 ** Math.min(decimals, 18);
+        const normalized = Number(value) / base / 10 ** Math.max(decimals - 18, 0);
+        return Number.isFinite(normalized) ? normalized : 0;
+    }
+
+    /**
+ * 🔥 Batch price fetch (much faster than per-token API calls)
+ */
+    private async getPricesUsd(symbols: string[]): Promise<Record<string, number>> {
+        const baseUrl = process.env.COINGECKO_BASE_URL;
+        const apiKey = process.env.COINGECKO_API_KEY;
+
+        const map: Record<string, string> = {
+            ETH: 'ethereum',
+            BTC: 'bitcoin',
+            SOL: 'solana',
+            USDC: 'usd-coin',
+            ARB: 'arbitrum',
+        };
+
+        const ids = symbols
+            .map((s) => map[s.toUpperCase()])
+            .filter(Boolean)
+            .join(',');
+
+        if (!ids) return {};
+
+        const res = await fetch(
+            `${baseUrl}/simple/price?ids=${ids}&vs_currencies=usd`, {
+            headers: {
+                'x_cg_demo_api_key': apiKey as string
+            },
+        }
+        );
+
+        if (!res.ok) return {};
+
+        const json = await res.json();
+
+        const result: Record<string, number> = {};
+
+        for (const symbol of symbols) {
+            const coinId = map[symbol.toUpperCase()];
+            if (coinId && json[coinId]?.usd) {
+                result[symbol] = json[coinId].usd;
+            }
+        }
+
+        return result;
+    }
+
+    private async getHistoricalPrice(
+        contractAddress: string,
+        date: string,
+    ): Promise<number | null> {
+
+        const baseUrl = process.env.COINGECKO_BASE_URL;
+
+        try {
+            const res = await fetch(
+                `${baseUrl}/coins/ethereum/contract/${contractAddress}/history?date=${date}`
+            );
+
+            if (!res.ok) return null;
+
+            const json = await res.json();
+
+            return json?.market_data?.current_price?.usd ?? null;
+
+        } catch {
+            return null;
+        }
+    }
+
+    private async estimateAvgBuyPriceUsd(
+        address: string,
+        contractAddress: string,
+    ): Promise<number | null> {
+
+        const alchemy = this.web3Service.alchemy;
+
+        try {
+            const transfers = await alchemy.core.getAssetTransfers({
+                fromBlock: "0x0",
+                toAddress: address,
+                contractAddresses: [contractAddress],
+                category: [AssetTransfersCategory.ERC20],
+                withMetadata: true,
+                maxCount: 50, // MVP limit
+            });
+
+            if (!transfers.transfers.length) return null;
+
+            let totalQty = 0;
+            let totalCost = 0;
+
+            for (const tx of transfers.transfers) {
+
+                // ✅ Skip if metadata missing
+                if (!tx.metadata?.blockTimestamp) continue;
+
+                const qty = Number(tx.value || 0);
+                if (!qty) continue;
+
+                const dateObj = new Date(tx.metadata.blockTimestamp);
+
+                const formattedDate = `${dateObj.getDate()}-${dateObj.getMonth() + 1}-${dateObj.getFullYear()}`;
+
+                const price = await this.getHistoricalPrice(contractAddress, formattedDate);
+
+                if (!price) continue;
+
+                totalQty += qty;
+                totalCost += qty * price;
+            }
+
+            if (totalQty === 0) return null;
+
+            return totalCost / totalQty;
+
+        } catch (err) {
+            console.error("Avg buy price error:", err);
+            return null;
+        }
+    }
+
+    async getPortfolioSummary(userId: string) {
+        try {
+            const user = await this.userRepository.findOne({ where: { id: userId } });
+            if (!user) throw new NotFoundException('User not found');
+
+            const address = user.walletAddress.toLowerCase();
+
+            // 1) Try cache first
+            const cacheKey = `wallet:portfolio:${user.id}:${address}`;
+            const cached = await this.get<any>(cacheKey);
+            if (cached) {
+                return {
+                    ...cached,
+                    cache: true,
+                };
+            }
+
+            const alchemy = this.web3Service.alchemy;
+            const tokens: TokenRow[] = [];
+
+            const balances = await alchemy.core.getTokenBalances(address);
+            const nonZero = balances.tokenBalances.filter(
+                (t) => t.tokenBalance && t.tokenBalance !== '0x0' && t.tokenBalance !== '0x',
+            );
+
+            const metadataList = await Promise.all(
+                nonZero.map((t) => alchemy.core.getTokenMetadata(t.contractAddress)),
+            );
+
+            const symbols = metadataList.map((m) => m.symbol ?? 'UNKNOWN');
+
+            const ethBalanceWei = await alchemy.core.getBalance(address);
+            const ethQuantity = Number(ethBalanceWei) / 1e18;
+            if (ethQuantity > 0) symbols.push('ETH');
+
+            const priceMap = await this.getPricesUsd(symbols);
+
+            for (let i = 0; i < nonZero.length; i++) {
+                const t = nonZero[i];
+                const metadata = metadataList[i];
+
+                const decimals = metadata.decimals ?? 18;
+                const symbol = metadata.symbol ?? 'UNKNOWN';
+                const name = metadata.name ?? 'Unknown Token';
+
+                const quantity = this.formatUnits(t.tokenBalance ?? '0x0', decimals);
+                if (quantity <= 0) continue;
+
+                const currentPriceUsd = priceMap[symbol] ?? 0;
+                const currentValueUsd = quantity * currentPriceUsd;
+
+                tokens.push({
+                    contractAddress: t.contractAddress,
+                    symbol,
+                    name,
+                    decimals,
+                    quantity: Number(quantity.toFixed(6)),
+                    currentPriceUsd: Number(currentPriceUsd.toFixed(4)),
+                    currentValueUsd: Number(currentValueUsd.toFixed(2)),
+                    allocationPercent: 0,
+                });
+            }
+
+            if (ethQuantity > 0) {
+                const ethPrice = priceMap['ETH'] ?? 0;
+                const ethValue = ethQuantity * ethPrice;
+
+                tokens.push({
+                    contractAddress: null,
+                    symbol: 'ETH',
+                    name: 'Ethereum',
+                    decimals: 18,
+                    quantity: Number(ethQuantity.toFixed(6)),
+                    currentPriceUsd: Number(ethPrice.toFixed(4)),
+                    currentValueUsd: Number(ethValue.toFixed(2)),
+                    allocationPercent: 0,
+                });
+
+            }
+
+            tokens.sort((a, b) => b.currentValueUsd - a.currentValueUsd);
+
+            const totalValueUsd = tokens.reduce((sum, t) => sum + t.currentValueUsd, 0);
+
+            for (const t of tokens) {
+                t.allocationPercent =
+                    totalValueUsd > 0
+                        ? Number(((t.currentValueUsd / totalValueUsd) * 100).toFixed(2))
+                        : 0;
+            }
+
+            // 2) Build result once
+            const result = {
+                success: true,
+                data: {
+                    walletAddress: address,
+                    totalValueUsd: Number(totalValueUsd.toFixed(2)),
+                    uniqueTokens: tokens.length,
+                    change24hPercent: 0,
+                    tokens,
+                },
+                cache: false,
+                generatedAt: new Date().toISOString(),
+            };
+
+            // 3) Save in cache (e.g. 5 min)
+            await this.set(cacheKey, result, 300);
+
+            return result;
+        } catch (error) {
+            this.handleServiceError(error, 'Wallet portfolio summary');
         }
     }
 
