@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { RedisModule } from './config/redis.module';
 import { AgentModule } from './modules/agent/agent.module';
+import { MarketModule } from './modules/market/market.module';
 
 @Module({
   imports: [
@@ -13,7 +14,8 @@ import { AgentModule } from './modules/agent/agent.module';
     DatabaseModule,
     WalletModule,
     RedisModule,
-    AgentModule
+    AgentModule,
+    MarketModule
   ],
   controllers: [AppController],
   providers: [AppService],

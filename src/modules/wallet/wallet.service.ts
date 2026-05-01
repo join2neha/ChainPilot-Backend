@@ -463,8 +463,8 @@ export class WalletService {
     }
 
     /**
- * 🔥 Batch price fetch (much faster than per-token API calls)
- */
+    * Batch price fetch (much faster than per-token API calls)
+    */
     private async getPricesUsd(symbols: string[]): Promise<Record<string, number>> {
         const baseUrl = process.env.COINGECKO_BASE_URL;
         const apiKey = process.env.COINGECKO_API_KEY;
