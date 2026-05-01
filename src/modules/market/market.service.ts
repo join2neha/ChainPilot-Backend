@@ -1,4 +1,4 @@
-import { Inject, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { HttpException, Inject, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 
 type InsightCard = {
@@ -21,6 +21,13 @@ type Recommendation = {
     source: 'RULES' | 'GPT';
 };
 
+type HeroToken = {
+    symbol: string;
+    priceUsd: number;
+    change24hPercent: number;
+    rsi: number;
+};
+
 @Injectable()
 export class MarketService {
     private readonly logger = new Logger(MarketService.name);
@@ -37,6 +44,17 @@ export class MarketService {
     private async get<T>(key: string): Promise<T | null> {
         const data = await this.redis.get(key);
         return data ? JSON.parse(data) : null;
+    }
+
+    private handleServiceError(error: unknown, context: string): never {
+        if (error instanceof HttpException) {
+            throw error;
+        }
+
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(`${context} failed: ${message}`, error instanceof Error ? error.stack : undefined);
+
+        throw new InternalServerErrorException(`${context} failed`);
     }
 
     // ----------------------------
@@ -168,8 +186,6 @@ export class MarketService {
 
         const apiKey = process.env.OPENAI_API_KEY?.trim();
 
-        console.log("---> apiKey", apiKey);
-
         if (!apiKey) {
             this.logger.warn("OpenAI API key missing");
             return fallback;
@@ -183,18 +199,18 @@ export class MarketService {
         }));
 
         const prompt = `You are a crypto signal assistant.
-Return ONLY valid JSON.
+                Return ONLY valid JSON.
 
-Data: ${JSON.stringify(compactCards)}
+                Data: ${JSON.stringify(compactCards)}
 
-Return:
-{
-  "action": "BUY|SELL|HOLD",
-  "symbol": "TOKEN",
-  "timeframe": "1h",
-  "confidence": 75,
-  "reason": "short explanation"
-}`;
+                Return:
+                    {
+                        "action": "BUY|SELL|HOLD",
+                        "symbol": "TOKEN",
+                        "timeframe": "1h",
+                        "confidence": 75,
+                        "reason": "short explanation"
+                }`;
 
         try {
             const response = await fetch('https://api.openai.com/v1/responses', {
@@ -337,5 +353,93 @@ Return:
         await this.set(cacheKey, result, 60);
 
         return result;
+    }
+
+    private buildHeroRecommendation(tokens: HeroToken[]) {
+        const scored = tokens.map((t) => {
+            const momentumNorm = Math.max(0, Math.min(1, (t.change24hPercent + 10) / 20)); // -10..10 -> 0..1
+            const rsiQuality = 1 - Math.abs(t.rsi - 50) / 50; // 0..1
+            const score = 0.7 * momentumNorm + 0.3 * rsiQuality;
+            return { ...t, score };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        const top = scored[0];
+        let action: 'BUY' | 'HOLD' | 'SELL' = 'HOLD';
+        if (top.score >= 0.65) action = 'BUY';
+        else if (top.score <= 0.35) action = 'SELL';
+        // Guardrails
+        if (top.rsi > 80 && action === 'BUY') action = 'HOLD';
+        if (top.rsi < 20 && action === 'SELL') action = 'HOLD';
+        const confidence = Math.round(55 + Math.abs(top.score - 0.5) * 90); // 55..100
+        return {
+            token: top.symbol,
+            action,
+            confidence: Math.max(55, Math.min(95, confidence)),
+            rsi: Number(top.rsi.toFixed(2)),
+            priceUsd: Number(top.priceUsd.toFixed(2)),
+            change24hPercent: Number(top.change24hPercent.toFixed(2)),
+            reason:
+                action === 'BUY'
+                    ? `${top.symbol} shows positive momentum with healthy RSI.`
+                    : action === 'SELL'
+                        ? `${top.symbol} appears weak relative to current momentum/RSI setup.`
+                        : `${top.symbol} is in a neutral zone; waiting is safer now.`,
+        };
+    }
+
+    async getHeroRecommendation(forceRefresh = false) {
+        try {
+            const cacheKey = 'market:hero-recommendation:v1';
+            if (!forceRefresh) {
+                const cached = await this.get<any>(cacheKey);
+                if (cached) return { ...cached, cache: true };
+            }
+            const baseUrl = process.env.COINGECKO_BASE_URL;
+            const apiKey = process.env.COINGECKO_API_KEY;
+            if (!baseUrl || !apiKey) {
+                throw new InternalServerErrorException('CoinGecko env config is missing');
+            }
+            const ids = ['ethereum', 'bitcoin', 'solana', 'arbitrum'];
+            const url =
+                `${baseUrl}/coins/markets` +
+                `?vs_currency=usd` +
+                `&ids=${ids.join(',')}` +
+                `&order=market_cap_desc&per_page=4&page=1` +
+                `&sparkline=true&price_change_percentage=24h`;
+            const res = await fetch(url, {
+                method: 'GET',
+                headers: { 'x_cg_demo_api_key': apiKey },
+            });
+            if (!res.ok) {
+                const txt = await res.text();
+                throw new InternalServerErrorException(`Failed to fetch market data: ${res.status} ${txt}`);
+            }
+            const json = await res.json();
+            const tokens: HeroToken[] = (json || []).map((coin: any) => {
+                const sparkline: number[] = coin?.sparkline_in_7d?.price?.slice(-30) ?? [];
+                return {
+                    symbol: String(coin.symbol || '').toUpperCase(),
+                    priceUsd: Number(coin.current_price ?? 0),
+                    change24hPercent: Number(coin.price_change_percentage_24h ?? 0),
+                    rsi: this.calculateRsiFromSeries(sparkline, 14),
+                };
+            });
+            if (!tokens.length) {
+                throw new InternalServerErrorException('No market data available');
+            }
+            const recommendation = this.buildHeroRecommendation(tokens);
+            const result = {
+                success: true,
+                data: {
+                    updatedAt: new Date().toISOString(),
+                    recommendation,
+                },
+                cache: false,
+            };
+            await this.set(cacheKey, result, 60); // 60s cache
+            return result;
+        } catch (error) {
+            this.handleServiceError(error, 'Get global market data');
+        }
     }
 }
