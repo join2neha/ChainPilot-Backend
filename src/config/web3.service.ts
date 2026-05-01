@@ -12,7 +12,7 @@ export class Web3Service {
             throw new InternalServerErrorException('ALCHEMY_API_KEY is missing');
         }
 
-        const networkName = this.configService.get<string>('ALCHEMY_NETWORK', 'ETH_SEPOLIA');
+        const networkName = this.configService.get<string>('ALCHEMY_NETWORK', 'ETH_MAINNET');
         const network =
             networkName === 'ETH_MAINNET' ? Network.ETH_MAINNET : Network.ETH_SEPOLIA;
 
