@@ -591,54 +591,94 @@ export class WalletService {
     }
 
     async getPortfolioSummary(userId: string) {
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+        if (!user) throw new NotFoundException('User not found');
+
+        const address = user.walletAddress.toLowerCase();
+        const cacheKey = `wallet:portfolio:${user.id}:${address}`;
+
+        // 1) cache-first
+        const cached = await this.get<any>(cacheKey);
+        if (cached) {
+            return { ...cached, cache: true };
+        }
+
         try {
-            const user = await this.userRepository.findOne({ where: { id: userId } });
-            if (!user) throw new NotFoundException('User not found');
-
-            const address = user.walletAddress.toLowerCase();
-
-            // 1) Try cache first
-            const cacheKey = `wallet:portfolio:${user.id}:${address}`;
-            const cached = await this.get<any>(cacheKey);
-            if (cached) {
-                return {
-                    ...cached,
-                    cache: true,
-                };
-            }
-
             const alchemy = this.web3Service.alchemy;
             const tokens: TokenRow[] = [];
 
-            const balances = await alchemy.core.getTokenBalances(address);
+            // 2) balances
+            const balances = await this.withAlchemyRetry(
+                'alchemy.getTokenBalances',
+                () => alchemy.core.getTokenBalances(address),
+            );
+
             const nonZero = balances.tokenBalances.filter(
                 (t) => t.tokenBalance && t.tokenBalance !== '0x0' && t.tokenBalance !== '0x',
             );
 
-            const metadataList = await Promise.all(
-                nonZero.map((t) => alchemy.core.getTokenMetadata(t.contractAddress)),
+            // prevent metadata storm on huge wallets
+            const capped = nonZero.slice(0, 80);
+
+            // 3) metadata with partial-failure tolerance
+            const metadataResults = await Promise.allSettled(
+                capped.map((t) =>
+                    this.withAlchemyRetry(
+                        `alchemy.getTokenMetadata:${t.contractAddress}`,
+                        () => alchemy.core.getTokenMetadata(t.contractAddress),
+                        1,
+                    ),
+                ),
             );
 
-            const symbols = metadataList.map((m) => m.symbol ?? 'UNKNOWN');
+            const metadataList = metadataResults.map((res, i) => {
+                if (res.status === 'fulfilled') return res.value;
 
-            const ethBalanceWei = await alchemy.core.getBalance(address);
+                const contract = capped[i]?.contractAddress ?? 'unknown';
+                this.logger.warn(`Metadata fetch failed for: ${contract}`);
+
+                return {
+                    symbol: 'UNKNOWN',
+                    name: 'Unknown Token',
+                    decimals: 18,
+                    logo: null,
+                };
+            });
+
+            // 4) eth
+            const ethBalanceWei = await this.withAlchemyRetry(
+                'alchemy.getBalance',
+                () => alchemy.core.getBalance(address),
+            );
             const ethQuantity = Number(ethBalanceWei) / 1e18;
+
+            // 5) price symbols (skip unknown)
+            const symbols = metadataList
+                .map((m) => (m.symbol ?? 'UNKNOWN').toUpperCase())
+                .filter((s) => s !== 'UNKNOWN');
+
             if (ethQuantity > 0) symbols.push('ETH');
 
             const priceMap = await this.getPricesUsd(symbols);
 
-            for (let i = 0; i < nonZero.length; i++) {
-                const t = nonZero[i];
+            // 6) process ERC20 holdings
+            for (let i = 0; i < capped.length; i++) {
+                const t = capped[i];
                 const metadata = metadataList[i];
 
                 const decimals = metadata.decimals ?? 18;
-                const symbol = metadata.symbol ?? 'UNKNOWN';
+                const symbol = (metadata.symbol ?? 'UNKNOWN').toUpperCase();
                 const name = metadata.name ?? 'Unknown Token';
 
                 const quantity = this.formatUnits(t.tokenBalance ?? '0x0', decimals);
                 if (quantity <= 0) continue;
 
+                // skip unknown + unpriced tokens to avoid noisy portfolio
+                if (symbol === 'UNKNOWN') continue;
+
                 const currentPriceUsd = priceMap[symbol] ?? 0;
+                if (!currentPriceUsd || currentPriceUsd <= 0) continue;
+
                 const currentValueUsd = quantity * currentPriceUsd;
 
                 tokens.push({
@@ -653,23 +693,26 @@ export class WalletService {
                 });
             }
 
+            // 7) add ETH
             if (ethQuantity > 0) {
                 const ethPrice = priceMap['ETH'] ?? 0;
                 const ethValue = ethQuantity * ethPrice;
 
-                tokens.push({
-                    contractAddress: null,
-                    symbol: 'ETH',
-                    name: 'Ethereum',
-                    decimals: 18,
-                    quantity: Number(ethQuantity.toFixed(6)),
-                    currentPriceUsd: Number(ethPrice.toFixed(4)),
-                    currentValueUsd: Number(ethValue.toFixed(2)),
-                    allocationPercent: 0,
-                });
-
+                if (ethPrice > 0 && ethValue > 0) {
+                    tokens.push({
+                        contractAddress: null,
+                        symbol: 'ETH',
+                        name: 'Ethereum',
+                        decimals: 18,
+                        quantity: Number(ethQuantity.toFixed(6)),
+                        currentPriceUsd: Number(ethPrice.toFixed(4)),
+                        currentValueUsd: Number(ethValue.toFixed(2)),
+                        allocationPercent: 0,
+                    });
+                }
             }
 
+            // 8) sort + allocation
             tokens.sort((a, b) => b.currentValueUsd - a.currentValueUsd);
 
             const totalValueUsd = tokens.reduce((sum, t) => sum + t.currentValueUsd, 0);
@@ -681,7 +724,6 @@ export class WalletService {
                         : 0;
             }
 
-            // 2) Build result once
             const result = {
                 success: true,
                 data: {
@@ -695,13 +737,73 @@ export class WalletService {
                 generatedAt: new Date().toISOString(),
             };
 
-            // 3) Save in cache (e.g. 5 min)
             await this.set(cacheKey, result, 300);
-
             return result;
         } catch (error) {
+            // stale-cache fallback on upstream failures
+            const stale = await this.get<any>(cacheKey);
+            if (stale) {
+                return {
+                    ...stale,
+                    cache: true,
+                    stale: true,
+                    warning: 'Live provider unavailable, returned cached portfolio.',
+                };
+            }
+
             this.handleServiceError(error, 'Wallet portfolio summary');
         }
+    }
+
+    private isRetryableAlchemyError(error: unknown): boolean {
+        const msg = error instanceof Error ? error.message : String(error);
+        return (
+            msg.includes('SERVER_ERROR') ||
+            msg.includes('429') ||
+            msg.toLowerCase().includes('timeout') ||
+            msg.toLowerCase().includes('network') ||
+            msg.includes('ETIMEDOUT') ||
+            msg.includes('ECONNRESET')
+        );
+    }
+
+    private sanitizeErrorMessage(error: unknown): string {
+        const raw = error instanceof Error ? error.message : String(error);
+        return raw
+            .replace(/https:\/\/[^ ]+/g, '[redacted-url]')
+            .replace(/\/v2\/[A-Za-z0-9_-]+/g, '/v2/[redacted-key]');
+    }
+
+    private async sleep(ms: number): Promise<void> {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    private async withAlchemyRetry<T>(
+        operationName: string,
+        fn: () => Promise<T>,
+        retries = 2,
+    ): Promise<T> {
+        let lastError: unknown;
+
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                return await fn();
+            } catch (error) {
+                lastError = error;
+                const retryable = this.isRetryableAlchemyError(error);
+
+                if (!retryable || attempt === retries) break;
+
+                const backoffMs = 250 * Math.pow(2, attempt);
+                this.logger.warn(
+                    `${operationName} failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${backoffMs}ms: ${this.sanitizeErrorMessage(error)}`,
+                );
+                await this.sleep(backoffMs);
+            }
+        }
+
+        this.logger.error(`${operationName} failed: ${this.sanitizeErrorMessage(lastError)}`);
+        throw lastError;
     }
 
     async logout(userId: string) {
