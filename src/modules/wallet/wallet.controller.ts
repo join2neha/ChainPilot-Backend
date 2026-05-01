@@ -34,6 +34,15 @@ export class WalletController {
         return this.walletService.getPortfolioSummary(req.user.sub);
     }
 
+    @Get('portfolio-analytics')
+    @UseGuards(AccessTokenGuard)
+    @ApiBearerAuth('access-token')
+    @ApiOperation({ summary: 'Get portfolio performance (D1..D30) and asset allocation' })
+    @ApiResponse({ status: 200, description: 'Portfolio analytics fetched' })
+    getPortfolioAnalytics(@Req() req: Request & { user: { sub: string } }) {
+        return this.walletService.getPortfolioAnalytics(req.user.sub);
+    }
+
     @Post('logout')
     @UseGuards(AccessTokenGuard)
     @ApiBearerAuth('access-token')

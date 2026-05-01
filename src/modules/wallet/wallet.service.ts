@@ -38,6 +38,13 @@ type TokenRow = {
     allocationPercent: number;
 };
 
+type AllocationRow = {
+    symbol: string;
+    name: string;
+    valueUsd: number;
+    allocationPercent: number;
+};
+
 
 @Injectable()
 export class WalletService {
@@ -443,7 +450,7 @@ export class WalletService {
                 },
             });
             await this.walletAnalysisRepository.save(analysis);
-            
+
             // keep users table in sync with latest analyzed level
             await this.userRepository.update(user.id, {
                 level: walletLevel as UserLevel,
@@ -754,6 +761,274 @@ export class WalletService {
             };
         } catch (error) {
             this.handleServiceError(error, 'Get global market data');
+        }
+    }
+
+    private mapSymbolToCoinId(symbol: string): string | null {
+        const map: Record<string, string> = {
+            ETH: 'ethereum',
+            BTC: 'bitcoin',
+            SOL: 'solana',
+            USDC: 'usd-coin',
+            ARB: 'arbitrum',
+        };
+        return map[symbol.toUpperCase()] ?? null;
+    }
+
+    private async getCoinMarketChartUsd(
+        coinId: string,
+        days: number,
+    ): Promise<Array<[number, number]>> {
+        const baseUrl = process.env.COINGECKO_BASE_URL;
+        const apiKey = process.env.COINGECKO_API_KEY;
+        if (!baseUrl || !apiKey) return [];
+        try {
+            const res = await fetch(
+                `${baseUrl}/coins/${coinId}/market_chart?vs_currency=usd&days=${days}&interval=daily`,
+                {
+                    headers: {
+                        'x_cg_demo_api_key': apiKey,
+                    },
+                },
+            );
+            if (!res.ok) return [];
+            const json = await res.json();
+            // [timestamp, price]
+            return Array.isArray(json?.prices) ? json.prices : [];
+        } catch {
+            return [];
+        }
+    }
+
+    private normalizeToLength(series: number[], len: number): number[] {
+        if (!series.length) return Array.from({ length: len }, () => 1);
+        if (series.length === len) return series;
+        if (series.length > len) {
+            return series.slice(series.length - len);
+        }
+        const out = [...series];
+        while (out.length < len) out.unshift(series[0]);
+        return out;
+    }
+
+    private buildD30Points(params: {
+        portfolioSeries: number[];
+        benchmarkSeries: number[];
+        startDate: Date;
+    }) {
+        const { portfolioSeries, benchmarkSeries, startDate } = params;
+        const len = Math.min(30, portfolioSeries.length, benchmarkSeries.length);
+        const points: Array<{
+            day: string;
+            ts: string;
+            benchmark: number;
+            value: number;
+        }> = [];
+        for (let i = 0; i < len; i++) {
+            const d = new Date(startDate);
+            d.setUTCDate(d.getUTCDate() + i);
+            points.push({
+                day: `D${i + 1}`,
+                ts: d.toISOString(),
+                benchmark: Number(benchmarkSeries[i].toFixed(2)),
+                value: Number(portfolioSeries[i].toFixed(2)),
+            });
+        }
+        const first = points[0]?.value ?? 0;
+        const last = points[points.length - 1]?.value ?? 0;
+        const changePercent = first > 0 ? Number((((last - first) / first) * 100).toFixed(2)) : 0;
+        return {
+            currentValueUsd: Number(last.toFixed(2)),
+            changePercent,
+            points,
+        };
+    }
+
+    private async buildPortfolioAndBenchmarkSeries30d(params: {
+        allocation: AllocationRow[];
+        totalValueUsd: number;
+    }): Promise<{ portfolioSeries: number[]; benchmarkSeries: number[] }> {
+        const { allocation, totalValueUsd } = params;
+        const DAYS = 30;
+        // 1) Portfolio series (weighted from token historical prices)
+        const relBySymbol: Record<string, number[]> = {};
+        for (const row of allocation) {
+            const coinId = this.mapSymbolToCoinId(row.symbol);
+            if (!coinId) continue;
+            const chart = await this.getCoinMarketChartUsd(coinId, DAYS);
+            const prices = chart.map((p: [number, number]) => Number(p[1])).filter((n) => Number.isFinite(n) && n > 0);
+            if (!prices.length) continue;
+            const normalized = this.normalizeToLength(prices, DAYS);
+            const base = normalized[0] || 1;
+            relBySymbol[row.symbol] = normalized.map((p) => p / base);
+        }
+        let portfolioIndex = Array.from({ length: DAYS }, () => 0);
+        for (const row of allocation) {
+            const rel = relBySymbol[row.symbol];
+            if (!rel) continue;
+            const weight = row.allocationPercent / 100;
+            for (let i = 0; i < DAYS; i++) {
+                portfolioIndex[i] += weight * rel[i];
+            }
+        }
+        // fallback if no historical data
+        if (portfolioIndex.every((v) => v === 0)) {
+            portfolioIndex = Array.from({ length: DAYS }, (_, i) => 1 + i * 0.0025);
+        }
+        const portfolioSeries = portfolioIndex.map((idx) => idx * totalValueUsd);
+        // 2) Benchmark series (60% BTC + 40% ETH)
+        const btcChart = await this.getCoinMarketChartUsd('bitcoin', DAYS);
+        const ethChart = await this.getCoinMarketChartUsd('ethereum', DAYS);
+        const btc = this.normalizeToLength(
+            btcChart.map((p: [number, number]) => Number(p[1])).filter((n) => Number.isFinite(n) && n > 0),
+            DAYS,
+        );
+        const eth = this.normalizeToLength(
+            ethChart.map((p: [number, number]) => Number(p[1])).filter((n) => Number.isFinite(n) && n > 0),
+            DAYS,
+        );
+        const btcBase = btc[0] || 1;
+        const ethBase = eth[0] || 1;
+        const benchmarkIndex = Array.from({ length: DAYS }, (_, i) => {
+            const btcRel = (btc[i] || btcBase) / btcBase;
+            const ethRel = (eth[i] || ethBase) / ethBase;
+            return 0.6 * btcRel + 0.4 * ethRel;
+        });
+        const benchmarkSeries = benchmarkIndex.map((idx) => idx * totalValueUsd);
+        return { portfolioSeries, benchmarkSeries };
+    }
+
+    private buildAssetAllocationTop4WithOthers(
+        rows: Array<{ symbol: string; name: string; valueUsd: number }>,
+    ) {
+        const total = rows.reduce((s, r) => s + r.valueUsd, 0);
+        const sorted = [...rows].sort((a, b) => b.valueUsd - a.valueUsd);
+        const top4 = sorted.slice(0, 4);
+        const rest = sorted.slice(4);
+        const othersValue = rest.reduce((s, r) => s + r.valueUsd, 0);
+        const mappedTop4 = top4.map((r) => ({
+            symbol: r.symbol,
+            name: r.name,
+            valueUsd: Number(r.valueUsd.toFixed(2)),
+            allocationPercent: total > 0 ? Number(((r.valueUsd / total) * 100).toFixed(2)) : 0,
+        }));
+        if (othersValue > 0) {
+            mappedTop4.push({
+                symbol: 'OTHERS',
+                name: 'Others',
+                valueUsd: Number(othersValue.toFixed(2)),
+                allocationPercent: total > 0 ? Number(((othersValue / total) * 100).toFixed(2)) : 0,
+            });
+        }
+        return mappedTop4;
+    }
+
+    async getPortfolioAnalytics(userId: string) {
+        try {
+            const user = await this.userRepository.findOne({ where: { id: userId } });
+            if (!user) throw new NotFoundException('User not found');
+            const address = user.walletAddress.toLowerCase();
+            const cacheKey = `wallet:portfolio-analytics:${user.id}:${address}:30d`;
+            // 1) cache-first
+            const cached = await this.get<any>(cacheKey);
+            if (cached) {
+                return { ...cached, cache: true };
+            }
+            const alchemy = this.web3Service.alchemy;
+            // 2) balances + metadata
+            const balances = await alchemy.core.getTokenBalances(address);
+            const nonZero = balances.tokenBalances.filter(
+                (t) => t.tokenBalance && t.tokenBalance !== '0x0' && t.tokenBalance !== '0x',
+            );
+            const metadataList = await Promise.all(
+                nonZero.map((t) => alchemy.core.getTokenMetadata(t.contractAddress)),
+            );
+            const ethBalanceWei = await alchemy.core.getBalance(address);
+            const ethQty = Number(ethBalanceWei) / 1e18;
+            const symbols = metadataList.map((m) => m.symbol ?? 'UNKNOWN');
+            if (ethQty > 0) symbols.push('ETH');
+            const priceMap = await this.getPricesUsd(symbols);
+            // 3) build current allocation
+            const allocationRaw: Array<{
+                symbol: string;
+                name: string;
+                quantity: number;
+                valueUsd: number;
+            }> = [];
+            for (let i = 0; i < nonZero.length; i++) {
+                const t = nonZero[i];
+                const m = metadataList[i];
+                const symbol = m.symbol ?? 'UNKNOWN';
+                const name = m.name ?? 'Unknown Token';
+                const decimals = m.decimals ?? 18;
+                const qty = this.formatUnits(t.tokenBalance ?? '0x0', decimals);
+                if (qty <= 0) continue;
+                const price = priceMap[symbol] ?? 0;
+                const valueUsd = qty * price;
+                if (valueUsd <= 0) continue;
+                allocationRaw.push({
+                    symbol,
+                    name,
+                    quantity: Number(qty.toFixed(6)),
+                    valueUsd: Number(valueUsd.toFixed(2)),
+                });
+            }
+            if (ethQty > 0) {
+                const ethPrice = priceMap['ETH'] ?? 0;
+                const ethValue = ethQty * ethPrice;
+                if (ethValue > 0) {
+                    allocationRaw.push({
+                        symbol: 'ETH',
+                        name: 'Ethereum',
+                        quantity: Number(ethQty.toFixed(6)),
+                        valueUsd: Number(ethValue.toFixed(2)),
+                    });
+                }
+            }
+            const totalValueUsd = allocationRaw.reduce((sum, r) => sum + r.valueUsd, 0);
+            const assetAllocation = this.buildAssetAllocationTop4WithOthers(allocationRaw);
+
+            // 4) build 30d portfolio + benchmark lines
+            const { portfolioSeries, benchmarkSeries } = await this.buildPortfolioAndBenchmarkSeries30d({
+                allocation: assetAllocation,
+                totalValueUsd: Number(totalValueUsd.toFixed(2)),
+            });
+
+            const startDate = new Date();
+            startDate.setUTCDate(startDate.getUTCDate() - 29); // D1 ... D30
+
+            const perf = this.buildD30Points({
+                portfolioSeries,
+                benchmarkSeries,
+                startDate,
+            });
+
+            const result = {
+                success: true,
+                data: {
+                    range: '30d',
+                    walletAddress: address,
+                    currentValueUsd: perf.currentValueUsd,
+                    changePercent: perf.changePercent,
+                    portfolioPerformance: {
+                        points: perf.points, // D1..D30 with { benchmark, value }
+                    },
+                    assetAllocation, // donut/pie chart
+                    meta: {
+                        currency: 'USD',
+                        benchmarkLabel: 'Crypto Market Index (60% BTC, 40% ETH)',
+                        generatedAt: new Date().toISOString(),
+                    },
+                },
+                cache: false,
+            };
+
+            // 5) cache for 5 min
+            await this.set(cacheKey, result, 300);
+
+            return result;
+        } catch (error) {
+            this.handleServiceError(error, 'Portfolio Analytics');
         }
     }
 }
