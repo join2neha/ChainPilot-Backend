@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { WalletAnalysis } from './entities/wallet-analysis.entity';
+import { AgentMemory } from './entities/agent-memory.entity';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { WalletAnalysis } from './entities/wallet-analysis.entity';
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         url: config.get<string>('SUPABASE_DB_URL'),
-        entities: [User, WalletAnalysis],
+        entities: [User, WalletAnalysis, AgentMemory],
         synchronize: true,
         ssl: {
           rejectUnauthorized: false,

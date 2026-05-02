@@ -12,10 +12,11 @@ import { AiAgentMemoryService } from './ai-agent-memory.service';
 import { User } from 'src/database/entities/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthModule } from '../auth/auth.module';
+import { AgentMemory } from 'src/database/entities/agent-memory.entity';
 
 @Module({
     imports: [
-        TypeOrmModule.forFeature([User, WalletAnalysis]),
+        TypeOrmModule.forFeature([User, WalletAnalysis, AgentMemory]),
         JwtModule.register({}),
         AuthModule,
         WalletIntelligenceModule,
