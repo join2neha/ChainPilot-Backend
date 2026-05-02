@@ -10,6 +10,7 @@ import { MarketModule } from './modules/market/market.module';
 import { WalletIntelligenceModule } from './modules/wallet-intelligence/wallet-intelligence.module';
 import { WalletRecommendationsModule } from './modules/wallet-recommendations/wallet-recommendations.module';
 import { OnchainModule } from './modules/onchain/onchain.module';
+import { PortfolioSimulatorModule } from './modules/portfolio-simulator/portfolio-simulator.module';
 
 @Module({
   imports: [
@@ -21,7 +22,8 @@ import { OnchainModule } from './modules/onchain/onchain.module';
     MarketModule,
     WalletIntelligenceModule,
     WalletRecommendationsModule,
-    OnchainModule
+    OnchainModule,
+    PortfolioSimulatorModule
   ],
   controllers: [AppController],
   providers: [AppService],
