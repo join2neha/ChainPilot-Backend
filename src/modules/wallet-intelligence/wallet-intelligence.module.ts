@@ -16,6 +16,7 @@ import { Web3Module } from 'src/config/web3.module';
       Web3Module
     ],
   controllers: [WalletIntelligenceController],
-  providers: [WalletIntelligenceService]
+  providers: [WalletIntelligenceService],
+  exports: [WalletIntelligenceService],
 })
 export class WalletIntelligenceModule {}

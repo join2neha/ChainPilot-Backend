@@ -17,5 +17,6 @@ import { WalletAnalysis } from 'src/database/entities/wallet-analysis.entity';
   ],
   providers: [WalletService],
   controllers: [WalletController],
+  exports: [WalletService],
 })
 export class WalletModule { }
