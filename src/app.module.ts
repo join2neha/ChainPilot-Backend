@@ -11,7 +11,7 @@ import { WalletIntelligenceModule } from './modules/wallet-intelligence/wallet-i
 import { WalletRecommendationsModule } from './modules/wallet-recommendations/wallet-recommendations.module';
 import { OnchainModule } from './modules/onchain/onchain.module';
 import { PortfolioSimulatorModule } from './modules/portfolio-simulator/portfolio-simulator.module';
-
+import { TimelineModule } from './modules/timeline/timeline.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -23,7 +23,8 @@ import { PortfolioSimulatorModule } from './modules/portfolio-simulator/portfoli
     WalletIntelligenceModule,
     WalletRecommendationsModule,
     OnchainModule,
-    PortfolioSimulatorModule
+    PortfolioSimulatorModule,
+    TimelineModule
   ],
   controllers: [AppController],
   providers: [AppService],
