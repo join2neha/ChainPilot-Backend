@@ -7,5 +7,6 @@ import { OnchainService } from './onchain.service';
   imports: [Web3Module],
   controllers: [OnchainController],
   providers: [OnchainService],
+  exports: [OnchainService],
 })
 export class OnchainModule {}
