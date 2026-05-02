@@ -14,6 +14,7 @@ export enum UserLevel {
 }
 
 import { WalletAnalysis } from './wallet-analysis.entity';
+import { AgentMemory } from './agent-memory.entity';
 
 @Entity('users')
 export class User {
@@ -35,6 +36,9 @@ export class User {
 
   @OneToMany(() => WalletAnalysis, (analysis) => analysis.user)
   walletAnalyses!: WalletAnalysis[];
+
+  @OneToMany(() => AgentMemory, (memory) => memory.user)
+  agentMemories!: AgentMemory[];
 
   @CreateDateColumn()
   createdAt: Date;

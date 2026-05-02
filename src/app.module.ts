@@ -5,26 +5,26 @@ import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { RedisModule } from './config/redis.module';
-import { AgentModule } from './modules/agent/agent.module';
 import { MarketModule } from './modules/market/market.module';
 import { WalletIntelligenceModule } from './modules/wallet-intelligence/wallet-intelligence.module';
 import { WalletRecommendationsModule } from './modules/wallet-recommendations/wallet-recommendations.module';
 import { OnchainModule } from './modules/onchain/onchain.module';
 import { PortfolioSimulatorModule } from './modules/portfolio-simulator/portfolio-simulator.module';
 import { TimelineModule } from './modules/timeline/timeline.module';
+import { AiAgentModule } from './modules/ai-agent/ai-agent.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     DatabaseModule,
     WalletModule,
     RedisModule,
-    AgentModule,
     MarketModule,
     WalletIntelligenceModule,
     WalletRecommendationsModule,
     OnchainModule,
     PortfolioSimulatorModule,
-    TimelineModule
+    TimelineModule,
+    AiAgentModule
   ],
   controllers: [AppController],
   providers: [AppService],
