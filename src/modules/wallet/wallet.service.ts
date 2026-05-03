@@ -118,7 +118,7 @@ export class WalletService {
 
             const accessToken = await this.jwtService.signAsync(payload, {
                 secret: process.env.JWT_ACCESS_SECRET,
-                expiresIn: '15m',
+                expiresIn: '7d'
             });
 
             const refreshToken = await this.jwtService.signAsync(payload, {
