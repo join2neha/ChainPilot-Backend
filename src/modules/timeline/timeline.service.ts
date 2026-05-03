@@ -19,6 +19,7 @@ import { WalletRecommendationsService } from '../wallet-recommendations/wallet-r
 import { OnchainService } from '../onchain/onchain.service';
 
 import { TimelineEvent, TimelineEventType } from './timeline.types';
+import { PriceService } from '../price/price.service';
 
 @Injectable()
 export class TimelineService {
@@ -34,6 +35,7 @@ export class TimelineService {
         private readonly walletRecommendations: WalletRecommendationsService,
         private readonly onchain: OnchainService,
         @Inject('REDIS_CLIENT') private readonly redis: Redis,
+        private readonly priceService: PriceService,
     ) { }
 
     /**
@@ -158,7 +160,7 @@ export class TimelineService {
             symbols.add(sym === 'ETH' ? 'ETH' : sym);
         }
 
-        const priceMap = await this.getUsdPrices([...symbols]);
+        const priceMap = await this.priceService.getPrices([...symbols]);
 
         const events: TimelineEvent[] = [];
 

@@ -8,6 +8,7 @@ import { User } from 'src/database/entities/user.entity';
 import { OnchainModule } from '../onchain/onchain.module';
 import { AuthModule } from '../auth/auth.module';
 import { Web3Module } from 'src/config/web3.module';
+import { PriceModule } from '../price/price.module';
 
 @Module({
     imports: [
@@ -16,6 +17,7 @@ import { Web3Module } from 'src/config/web3.module';
         AuthModule,
         OnchainModule,
         Web3Module,
+        PriceModule
     ],
     controllers: [SwapIntelligenceProController],
     providers: [SwapIntelligenceProService],

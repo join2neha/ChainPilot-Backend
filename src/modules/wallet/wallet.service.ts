@@ -8,6 +8,7 @@ import { AssetTransfersCategory } from '../../common/constants/constants';
 import { Web3Service } from '../../config/web3.service'
 import { WalletAnalysis } from '../../database/entities/wallet-analysis.entity';
 import Redis from 'ioredis';
+import { PriceService } from '../price/price.service';
 
 
 type Trade = {
@@ -71,6 +72,7 @@ export class WalletService {
         @Inject('REDIS_CLIENT') private readonly redis: Redis,
         @InjectRepository(WalletAnalysis)
         private readonly walletAnalysisRepository: Repository<WalletAnalysis>,
+        private readonly priceService: PriceService,
     ) { }
 
     private readonly logger = new Logger(WalletService.name);
@@ -685,7 +687,7 @@ export class WalletService {
 
             if (ethQuantity > 0) symbols.push('ETH');
 
-            const priceMap = await this.getPricesUsd(symbols);
+            const priceMap = await this.priceService.getPrices(symbols);
 
             // 6) process ERC20 holdings
             for (let i = 0; i < capped.length; i++) {
@@ -1124,7 +1126,7 @@ export class WalletService {
             const ethQty = Number(ethBalanceWei) / 1e18;
             const symbols = metadataList.map((m) => m.symbol ?? 'UNKNOWN');
             if (ethQty > 0) symbols.push('ETH');
-            const priceMap = await this.getPricesUsd(symbols);
+            const priceMap = await this.priceService.getPrices(symbols);
             // 3) build current allocation
             const allocationRaw: Array<{
                 symbol: string;
