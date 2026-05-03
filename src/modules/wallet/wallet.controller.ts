@@ -54,10 +54,10 @@ export class WalletController {
 
 
     @Get('global-market')
-    // @UseGuards(AccessTokenGuard) 
-    // @ApiBearerAuth('access-token')
-    getGlobalMarket() {
-        return this.walletService.getGlobalMarketData();
+    @ApiOperation({ summary: 'Get 25-token scrolling ticker via Binance' })
+    @ApiResponse({ status: 200, description: 'Ticker data fetched' })
+    async getGlobalMarket() {
+        return this.walletService.getGlobalMarket();
     }
 
 }
