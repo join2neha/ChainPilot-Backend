@@ -355,14 +355,25 @@ export class WalletService {
                 (t) => t.tokenBalance && t.tokenBalance !== '0x0' && t.tokenBalance !== '0x',
             );
 
-            const tokenHoldings = await Promise.all(
-                nonZeroTokenBalances.map(async (t) => {
-                    const metadata = await alchemy.core.getTokenMetadata(t.contractAddress);
+            const metadataResults = await Promise.allSettled(
+                nonZeroTokenBalances.map((t) =>
+                    alchemy.core.getTokenMetadata(t.contractAddress),
+                ),
+            );
+
+            const tokenHoldings = metadataResults
+                .map((res, i) => {
+                    const t = nonZeroTokenBalances[i];
+                    const metadata =
+                        res.status === 'fulfilled'
+                            ? res.value
+                            : { symbol: 'UNKNOWN', name: 'Unknown Token', decimals: 18, logo: null };
+
                     const decimals = metadata.decimals ?? 18;
                     const raw = t.tokenBalance ?? '0x0';
                     const rawBigInt = BigInt(raw);
-                    const normalized =
-                        Number(rawBigInt) / Math.pow(10, decimals); // MVP-friendly
+                    const normalized = Number(rawBigInt) / Math.pow(10, decimals);
+
                     return {
                         contractAddress: t.contractAddress,
                         symbol: metadata.symbol ?? 'UNKNOWN',
@@ -372,8 +383,8 @@ export class WalletService {
                         balance: normalized,
                         logo: metadata.logo ?? null,
                     };
-                }),
-            );
+                })
+                .filter((t) => t.symbol !== 'UNKNOWN');
 
             const tokenHoldingCount = tokenHoldings.length;
 
@@ -884,7 +895,7 @@ export class WalletService {
     private async fetchBinanceTicker(): Promise<any[]> {
         const symbols = encodeURIComponent(JSON.stringify(TRACKED_SYMBOLS));
         const res = await fetch(
-            `https://api.binance.com/api/v3/ticker/24hr?symbols=${symbols}`
+            `https://data-api.binance.vision/api/v3/ticker/24hr?symbols=${symbols}`
         );
         if (!res.ok) throw new Error(`Binance API failed: ${res.status}`);
         return res.json();
@@ -1085,20 +1096,30 @@ export class WalletService {
             if (!user) throw new NotFoundException('User not found');
             const address = user.walletAddress.toLowerCase();
             const cacheKey = `wallet:portfolio-analytics:${user.id}:${address}:30d`;
+
             // 1) cache-first
             const cached = await this.get<any>(cacheKey);
             if (cached) {
                 return { ...cached, cache: true };
             }
             const alchemy = this.web3Service.alchemy;
+
             // 2) balances + metadata
             const balances = await alchemy.core.getTokenBalances(address);
             const nonZero = balances.tokenBalances.filter(
                 (t) => t.tokenBalance && t.tokenBalance !== '0x0' && t.tokenBalance !== '0x',
             );
-            const metadataList = await Promise.all(
+
+            const metadataResults = await Promise.allSettled(
                 nonZero.map((t) => alchemy.core.getTokenMetadata(t.contractAddress)),
             );
+            
+            const metadataList = metadataResults.map((res) =>
+                res.status === 'fulfilled'
+                    ? res.value
+                    : { symbol: 'UNKNOWN', name: 'Unknown Token', decimals: 18, logo: null },
+            );
+
             const ethBalanceWei = await alchemy.core.getBalance(address);
             const ethQty = Number(ethBalanceWei) / 1e18;
             const symbols = metadataList.map((m) => m.symbol ?? 'UNKNOWN');

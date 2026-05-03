@@ -12,6 +12,7 @@ import { OnchainModule } from './modules/onchain/onchain.module';
 import { PortfolioSimulatorModule } from './modules/portfolio-simulator/portfolio-simulator.module';
 import { TimelineModule } from './modules/timeline/timeline.module';
 import { AiAgentModule } from './modules/ai-agent/ai-agent.module';
+import { SwapIntelligenceProModule } from './modules/swap-intelligence/swap-intelligence-pro.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -24,7 +25,8 @@ import { AiAgentModule } from './modules/ai-agent/ai-agent.module';
     OnchainModule,
     PortfolioSimulatorModule,
     TimelineModule,
-    AiAgentModule
+    AiAgentModule,
+    SwapIntelligenceProModule
   ],
   controllers: [AppController],
   providers: [AppService],
