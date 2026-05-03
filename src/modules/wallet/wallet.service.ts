@@ -45,6 +45,21 @@ type AllocationRow = {
     allocationPercent: number;
 };
 
+type TickerToken = {
+    symbol: string;
+    price: number;
+    change24h: number;
+    trend: 'up' | 'down';
+};
+
+const TRACKED_SYMBOLS = [
+    'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
+    'ADAUSDT', 'DOGEUSDT', 'TRXUSDT', 'MATICUSDT', 'DOTUSDT',
+    'LTCUSDT', 'LINKUSDT', 'AVAXUSDT', 'ATOMUSDT', 'UNIUSDT',
+    'ARBUSDT', 'OPUSDT', 'APTUSDT', 'SUIUSDT', 'NEARUSDT',
+    'FTMUSDT', 'PEPEUSDT', 'SHIBUSDT', 'INJUSDT', 'RNDRUSDT',
+];
+
 
 @Injectable()
 export class WalletService {
@@ -863,6 +878,45 @@ export class WalletService {
             };
         } catch (error) {
             this.handleServiceError(error, 'Get global market data');
+        }
+    }
+
+    private async fetchBinanceTicker(): Promise<any[]> {
+        const symbols = encodeURIComponent(JSON.stringify(TRACKED_SYMBOLS));
+        const res = await fetch(
+            `https://api.binance.com/api/v3/ticker/24hr?symbols=${symbols}`
+        );
+        if (!res.ok) throw new Error(`Binance API failed: ${res.status}`);
+        return res.json();
+    }
+
+    async getGlobalMarket(): Promise<{ success: true; data: { tokens: TickerToken[] } }> {
+        const cacheKey = 'market:ticker';
+
+        const cached = await this.get<TickerToken[]>(cacheKey);
+        if (cached) return { success: true, data: { tokens: cached } };
+
+        try {
+            const data = await this.fetchBinanceTicker();
+
+            const tokens: TickerToken[] = data.map((d: any) => ({
+                symbol: String(d.symbol).replace('USDT', ''),
+                price: Number(d.lastPrice),
+                change24h: Number(Number(d.priceChangePercent).toFixed(2)),
+                trend: Number(d.priceChangePercent) >= 0 ? 'up' : 'down',
+            }));
+
+            await this.set(cacheKey, tokens, 15);
+
+            return { success: true, data: { tokens } };
+        } catch (error) {
+            this.logger.error(`Binance ticker fetch failed: ${error}`);
+
+            // Fallback to stale cache if Binance is down
+            const stale = await this.get<TickerToken[]>(cacheKey);
+            if (stale) return { success: true, data: { tokens: stale } };
+
+            throw new InternalServerErrorException('Failed to fetch global market ticker');
         }
     }
 
