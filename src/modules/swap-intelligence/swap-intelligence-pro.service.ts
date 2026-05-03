@@ -1,369 +1,382 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import Redis from 'ioredis';
-import { OnchainService } from '../onchain/onchain.service';
-import { WalletIntelligenceService } from '../wallet-intelligence/wallet-intelligence.service';
+import { Web3Service } from 'src/config/web3.service';
+import { User } from 'src/database/entities/user.entity';
 import { AgentMemory } from 'src/database/entities/agent-memory.entity';
-import { WalletService } from '../wallet/wallet.service';
+import { OnchainService } from '../onchain/onchain.service';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 type Mode = 'conservative' | 'balanced' | 'aggressive';
 type Risk = 'low' | 'medium' | 'high';
 
-type Opportunity = {
-    tokenIn: string;
-    tokenOut: string;
-    percent: number;
+type NormalizedToken = {
+    symbol: string;
+    balance: number;
+    decimals: number;
+    contractAddress: string | null;
 };
 
-type Quote = {
-    amountOut: string;
-    priceImpact: string;
-    route: string;
+type PricedToken = NormalizedToken & {
+    priceUsd: number;
+    valueUsd: number;
 };
+
+type PortfolioToken = {
+    symbol: string;
+    valueUsd: number;
+    allocationPercent: number;
+};
+
+type Portfolio = {
+    totalValueUsd: number;
+    riskLevel: Risk;
+    tokens: PortfolioToken[];
+};
+
+type Opportunity = { tokenIn: string; tokenOut: string; percent: number };
 
 type Suggestion = {
     tokenIn: string;
     tokenOut: string;
     percent: number;
     impact: string;
-    confidence: number;
     risk: Risk;
-    quote: Quote | null;
+    confidence: number;
     reasoning: string;
 };
 
-type PortfolioSnapshot = {
-    totalValueUsd: number;
-    tokens: Array<{ symbol: string; allocationPercent: number }>;
+// ─── Constants ─────────────────────────────────────────────────────────────
+
+const COIN_ID_MAP: Record<string, string> = {
+    ETH: 'ethereum', WETH: 'weth', BTC: 'bitcoin', WBTC: 'wrapped-bitcoin',
+    SOL: 'solana', BNB: 'binancecoin', ARB: 'arbitrum', OP: 'optimism',
+    MATIC: 'matic-network', LINK: 'chainlink', AVAX: 'avalanche-2',
+    NEAR: 'near', UNI: 'uniswap', AAVE: 'aave', CRV: 'curve-dao-token',
+    LDO: 'lido-dao', MKR: 'maker', USDC: 'usd-coin', USDT: 'tether',
+    DAI: 'dai', BUSD: 'binance-usd', FRAX: 'frax', DOGE: 'dogecoin',
+    SHIB: 'shiba-inu', PEPE: 'pepe', HEX: 'hex',
 };
 
-// ─── Volatility map ────────────────────────────────────────────────────────
+const CORE_ASSETS = ['ETH', 'BTC', 'SOL', 'ARB', 'LINK', 'MATIC', 'AVAX', 'NEAR', 'UNI', 'AAVE'];
 
-const TOKEN_VOLATILITY: Record<string, Risk> = {
-    BTC: 'low', ETH: 'low', USDC: 'low', USDT: 'low', DAI: 'low',
-    ARB: 'medium', SOL: 'medium', MATIC: 'medium', LINK: 'medium',
-    DOGE: 'high', SHIB: 'high', PEPE: 'high', FLOKI: 'high',
-};
+const STABLES = new Set(['USDC', 'USDT', 'DAI', 'BUSD', 'FRAX', 'FDUSD', 'LUSD', 'SUSD']);
+
+const SPAM_PATTERNS = [
+    'visit', 'http', 'claim', 'reward', '.com', '.io', '.net',
+    'yt-', 'pt-', 'sy-', 'farming', 'airdrop', '#', 'lp', 'pool',
+];
+
+// ─── Service ───────────────────────────────────────────────────────────────
 
 @Injectable()
 export class SwapIntelligenceProService {
     private readonly logger = new Logger(SwapIntelligenceProService.name);
 
     constructor(
+        private readonly web3Service: Web3Service,
         private readonly onchainService: OnchainService,
-        private readonly walletService: WalletService,
-        private readonly walletIntelligenceService: WalletIntelligenceService,
-        @InjectRepository(AgentMemory)
-        private readonly agentMemoryRepo: Repository<AgentMemory>,
+        @InjectRepository(User) private readonly userRepo: Repository<User>,
+        @InjectRepository(AgentMemory) private readonly agentMemoryRepo: Repository<AgentMemory>,
         @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    ) { }
+    ) {}
 
     // ─── Main entry ────────────────────────────────────────────────────────
 
     async getSwapIntelligence(userId: string, mode: Mode) {
-        const cacheKey = `swap-intel:${userId}:${mode}`;
+        const cacheKey = `swap-intel-v2:${userId}:${mode}`;
         const cached = await this.getCache<any>(cacheKey);
         if (cached) return { ...cached, cache: true };
 
-        const [portfolioData, walletData, signalsData, marketData, memories] = await Promise.allSettled([
-            this.walletService.getPortfolioSummary(userId),
-            this.walletService.analyzeWalletDetails(userId),
+        const user = await this.userRepo.findOne({ where: { id: userId } });
+        if (!user) throw new NotFoundException('User not found');
+
+        const address = user.walletAddress.toLowerCase();
+
+        const [tokensResult, signalsResult, memoriesResult] = await Promise.allSettled([
+            this.fetchAndNormalizeTokens(address),
             this.onchainService.getOnchainSignals(),
-            this.walletService.getGlobalMarket(),
             this.agentMemoryRepo.find({ where: { userId }, order: { createdAt: 'DESC' }, take: 10 }),
         ]);
 
-        const portfolio = this.extractTokenAllocations(portfolioData, walletData);
-        const signals = signalsData.status === 'fulfilled' ? signalsData.value : null;
-        const market = marketData.status === 'fulfilled' ? marketData.value : null;
-        const recentMemories = memories.status === 'fulfilled' ? memories.value : [];
+        const normalizedTokens = tokensResult.status === 'fulfilled' ? tokensResult.value : [];
+        const signals         = signalsResult.status === 'fulfilled' ? signalsResult.value : null;
+        const memories        = memoriesResult.status === 'fulfilled' ? memoriesResult.value : [];
 
-        const opportunities = this.detectOpportunities(portfolio.tokens, signals, market);
+        const pricedTokens = await this.priceTokens(normalizedTokens);
+        const portfolio    = this.buildPortfolio(pricedTokens);
+        const opportunities = this.detectOpportunities(portfolio);
 
         const suggestions = await Promise.all(
-            opportunities.map(async (opp) => {
-                const adjustedOpp = this.applyModeAdjustment(opp, mode);
-                const [quote, confidence, risk, reasoning] = await Promise.all([
-                    this.getEstimatedQuote(adjustedOpp, market),
-                    Promise.resolve(this.calculateConfidence(adjustedOpp, portfolio, signals, recentMemories)),
-                    Promise.resolve(this.calculateRisk(adjustedOpp, portfolio)),
-                    this.generateReasoning(adjustedOpp, portfolio, signals, mode),
-                ]);
-
-                return {
-                    tokenIn: adjustedOpp.tokenIn,
-                    tokenOut: adjustedOpp.tokenOut,
-                    percent: adjustedOpp.percent,
-                    impact: `${adjustedOpp.percent}% of your ${adjustedOpp.tokenIn} holdings`,
-                    confidence,
-                    risk,
-                    quote,
-                    reasoning,
-                } as Suggestion;
-            }),
+            opportunities.map((opp) =>
+                this.buildSuggestion(this.applyModeAdjustment(opp, mode), portfolio, signals, memories, mode),
+            ),
         );
-
-        const insight = this.buildInsight(portfolio, signals, mode);
 
         const result = {
             success: true,
             data: {
-                portfolioValue: portfolio.totalValueUsd,
-                topAllocations: portfolio.tokens
-                    .slice(0, 4)
-                    .map((t) => ({ symbol: t.symbol, allocationPercent: t.allocationPercent })),
+                portfolio: {
+                    totalValueUsd: portfolio.totalValueUsd,
+                    riskLevel: portfolio.riskLevel,
+                    topAllocations: portfolio.tokens.slice(0, 5),
+                },
                 mode,
-                insight,
+                insight: this.buildInsight(portfolio, signals),
                 suggestions: suggestions.slice(0, 3),
             },
             cache: false,
         };
 
-        await this.setCache(cacheKey, result, 30);
+        await this.setCache(cacheKey, result, 60);
         return result;
     }
 
-    // ─── Step 1: Extract portfolio from wallet intelligence ───────────────
+    // ─── Step 1: Fetch + normalize from Alchemy ────────────────────────────
 
-    private extractTokenAllocations(
-        portfolioResult: PromiseSettledResult<any>,
-        walletResult: PromiseSettledResult<any>,
-    ): { totalValueUsd: number; tokens: Array<{ symbol: string; allocationPercent: number }> } {
+    private async fetchAndNormalizeTokens(address: string): Promise<NormalizedToken[]> {
+        const alchemy = this.web3Service.alchemy;
+        const result: NormalizedToken[] = [];
 
-        // Use real portfolio if available
-        const tokens = portfolioResult.status === 'fulfilled'
-            ? (portfolioResult.value?.data?.tokens ?? [])
-            : [];
+        const balances = await alchemy.core.getTokenBalances(address);
+        const nonZero = balances.tokenBalances.filter(
+            (t) => t.tokenBalance && t.tokenBalance !== '0x0' && t.tokenBalance !== '0x',
+        );
 
-        if (tokens.length > 0) {
-            return {
-                totalValueUsd: portfolioResult.status === 'fulfilled'
-                    ? (portfolioResult.value?.data?.totalValueUsd ?? 0)
-                    : 0,
-                tokens,
-            };
+        const metadataResults = await Promise.allSettled(
+            nonZero.map((t) => alchemy.core.getTokenMetadata(t.contractAddress)),
+        );
+
+        for (let i = 0; i < nonZero.length; i++) {
+            const t = nonZero[i];
+            const meta = metadataResults[i];
+            if (meta.status !== 'fulfilled') continue;
+
+            const symbol = (meta.value.symbol ?? '').trim();
+            if (!symbol || this.isSpam(symbol)) continue;
+
+            const decimals = meta.value.decimals ?? 18;
+            const balance = Number(BigInt(t.tokenBalance ?? '0x0')) / Math.pow(10, decimals);
+            if (balance <= 0) continue;
+
+            result.push({ symbol: symbol.toUpperCase(), balance, decimals, contractAddress: t.contractAddress });
         }
 
-        // Fallback: infer from wallet analysis risk profile
-        const wallet = walletResult.status === 'fulfilled' ? walletResult.value : null;
-        const risk = wallet?.risk_score ?? 50;
-        const behavior = wallet?.behavior_type ?? 'Balanced';
+        // Native ETH
+        const ethWei = await alchemy.core.getBalance(address);
+        const ethBalance = Number(ethWei) / 1e18;
+        if (ethBalance > 0.0001) {
+            result.push({ symbol: 'ETH', balance: ethBalance, decimals: 18, contractAddress: null });
+        }
 
-        // Build synthetic allocation based on risk profile
-        if (risk >= 70 || behavior === 'Degenerate') {
-            return {
-                totalValueUsd: 0,
-                tokens: [
-                    { symbol: 'ETH', allocationPercent: 30 },
-                    { symbol: 'SOL', allocationPercent: 40 },
-                    { symbol: 'ARB', allocationPercent: 30 },
-                ],
-            };
-        }
-        if (risk >= 40 || behavior === 'Swing Trader') {
-            return {
-                totalValueUsd: 0,
-                tokens: [
-                    { symbol: 'ETH', allocationPercent: 50 },
-                    { symbol: 'SOL', allocationPercent: 30 },
-                    { symbol: 'USDC', allocationPercent: 20 },
-                ],
-            };
-        }
-        return {
-            totalValueUsd: 0,
-            tokens: [
-                { symbol: 'ETH', allocationPercent: 40 },
-                { symbol: 'BTC', allocationPercent: 40 },
-                { symbol: 'USDC', allocationPercent: 20 },
-            ],
-        };
+        this.logger.log(`[SwapIntel] ${result.length} clean tokens for ${address}`);
+        return result;
     }
 
-    // ─── Step 2: Opportunity detection ────────────────────────────────────
+    private isSpam(symbol: string): boolean {
+        const lower = symbol.toLowerCase();
+        return SPAM_PATTERNS.some((p) => lower.includes(p));
+    }
 
-    private detectOpportunities(
-        tokens: Array<{ symbol: string; allocationPercent: number }>,
-        signals: any,
-        market: any,
-    ): Opportunity[] {
-        const top3 = tokens.slice(0, 3);
+    // ─── Step 2: Price tokens ──────────────────────────────────────────────
+
+    private async priceTokens(tokens: NormalizedToken[]): Promise<PricedToken[]> {
+        const symbols = [...new Set(tokens.map((t) => t.symbol))];
+        const priceMap = await this.fetchCoinGeckoPrices(symbols);
+        return tokens.map((t) => ({
+            ...t,
+            priceUsd: priceMap[t.symbol] ?? 0,
+            valueUsd: (priceMap[t.symbol] ?? 0) * t.balance,
+        }));
+    }
+
+    private async fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, number>> {
+        const baseUrl = process.env.COINGECKO_BASE_URL;
+        const apiKey  = process.env.COINGECKO_API_KEY;
+        if (!baseUrl || !apiKey) return {};
+
+        const coinIds = [...new Set(symbols.map((s) => COIN_ID_MAP[s]).filter(Boolean))];
+        if (!coinIds.length) return {};
+
+        try {
+            const res = await fetch(
+                `${baseUrl}/simple/price?ids=${coinIds.join(',')}&vs_currencies=usd`,
+                { headers: { 'x_cg_demo_api_key': apiKey } },
+            );
+            if (!res.ok) return {};
+
+            const json = await res.json();
+            const out: Record<string, number> = {};
+            for (const sym of symbols) {
+                const id = COIN_ID_MAP[sym];
+                if (id && json?.[id]?.usd) out[sym] = json[id].usd;
+            }
+            return out;
+        } catch {
+            return {};
+        }
+    }
+
+    // ─── Step 3: Build portfolio ───────────────────────────────────────────
+
+    private buildPortfolio(tokens: PricedToken[]): Portfolio {
+        const meaningful = tokens.filter((t) => t.valueUsd >= 1);
+        const totalValueUsd = meaningful.reduce((s, t) => s + t.valueUsd, 0);
+
+        const portfolioTokens: PortfolioToken[] = meaningful
+            .map((t) => ({
+                symbol: t.symbol,
+                valueUsd: Number(t.valueUsd.toFixed(2)),
+                allocationPercent: totalValueUsd > 0
+                    ? Number(((t.valueUsd / totalValueUsd) * 100).toFixed(2))
+                    : 0,
+            }))
+            .sort((a, b) => b.allocationPercent - a.allocationPercent);
+
+        const stableAlloc = portfolioTokens
+            .filter((t) => STABLES.has(t.symbol))
+            .reduce((s, t) => s + t.allocationPercent, 0);
+
+        const riskLevel: Risk = stableAlloc > 50 ? 'low' : stableAlloc < 10 ? 'high' : 'medium';
+
+        return { totalValueUsd: Number(totalValueUsd.toFixed(2)), riskLevel, tokens: portfolioTokens };
+    }
+
+    // ─── Step 4: Detect opportunities ─────────────────────────────────────
+
+    private detectOpportunities(portfolio: Portfolio): Opportunity[] {
+        const tokens = portfolio.tokens;
+        if (!tokens.length) return [];
+
+        const held = new Set(tokens.map((t) => t.symbol));
+        const seen = new Set<string>();
         const opportunities: Opportunity[] = [];
 
-        for (const token of top3) {
-            const tokenOut = this.suggestSwapTarget(token.symbol, tokens);
+        for (const tokenIn of tokens.slice(0, 3)) {
+            const tokenOut = this.pickSwapTarget(tokenIn.symbol, held);
             if (!tokenOut) continue;
 
+            const key = `${tokenIn.symbol}-${tokenOut}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
             const percent =
-                token.allocationPercent >= 40 ? 20
-                    : token.allocationPercent >= 20 ? 15
-                        : 10;
+                tokenIn.allocationPercent >= 50 ? 20
+                : tokenIn.allocationPercent >= 30 ? 15
+                : 10;
 
-            opportunities.push({
-                tokenIn: token.symbol,
-                tokenOut,
-                percent,
-            });
-        }
-
-        if (!opportunities.length) {
-            opportunities.push({ tokenIn: 'ETH', tokenOut: 'BTC', percent: 10 });
+            opportunities.push({ tokenIn: tokenIn.symbol, tokenOut, percent });
         }
 
         return opportunities.slice(0, 3);
     }
 
-    private suggestSwapTarget(
-        tokenIn: string,
-        tokens: Array<{ symbol: string; allocationPercent: number }>,
-    ): string | null {
-        const held = new Set(tokens.map((t) => t.symbol));
-
-        const STABLES = new Set(['USDC', 'USDT', 'DAI', 'BUSD', 'FDUSD']);
-        const L1S = ['ETH', 'BTC', 'SOL', 'BNB'];
-        const L2S = ['ARB', 'OP', 'MATIC', 'LINK', 'AVAX', 'NEAR'];
-
+    private pickSwapTarget(tokenIn: string, held: Set<string>): string | null {
         if (STABLES.has(tokenIn)) {
-            // Stables → rotate into best L1 not already dominant
-            return L1S.find((t) => t !== tokenIn) ?? 'ETH';
+            return CORE_ASSETS.find((a) => !held.has(a)) ?? 'ETH';
         }
-
-        if (L1S.includes(tokenIn)) {
-            // L1 → diversify into L2 or complementary L1
-            const target = [...L2S, ...L1S].find((t) => t !== tokenIn && !held.has(t));
-            return target ?? (tokenIn === 'ETH' ? 'BTC' : 'ETH');
-        }
-
-        // Alt/meme → rotate to safety
-        return held.has('ETH') ? 'BTC' : 'ETH';
+        const unowned = CORE_ASSETS.find((a) => a !== tokenIn && !held.has(a));
+        if (unowned) return unowned;
+        return CORE_ASSETS.find((a) => a !== tokenIn) ?? null;
     }
 
-    // ─── Step 3: Mode adjustment ───────────────────────────────────────────
+    // ─── Step 5: Mode adjustment ───────────────────────────────────────────
 
     private applyModeAdjustment(opp: Opportunity, mode: Mode): Opportunity {
-        let percent = opp.percent;
-
-        if (mode === 'conservative') percent = Math.round(percent * 0.5);
-        if (mode === 'aggressive') percent = Math.round(percent * 1.3);
-
-        return { ...opp, percent: Math.min(percent, 50) };
+        const m = mode === 'conservative' ? 0.5 : mode === 'aggressive' ? 1.3 : 1;
+        return { ...opp, percent: Math.min(Math.round(opp.percent * m), 50) };
     }
 
-    // ─── Step 4: Estimated quote (price-based, no AlphaRouter needed) ─────
+    // ─── Step 6: Build suggestion ──────────────────────────────────────────
 
-    private async getEstimatedQuote(opp: Opportunity, market: any): Promise<Quote | null> {
-        try {
-            const tokens: any[] = market?.data?.tokens ?? [];
-            const inToken = tokens.find((t) => t.symbol === opp.tokenIn);
-            const outToken = tokens.find((t) => t.symbol === opp.tokenOut);
+    private async buildSuggestion(
+        opp: Opportunity,
+        portfolio: Portfolio,
+        signals: any,
+        memories: AgentMemory[],
+        mode: Mode,
+    ): Promise<Suggestion> {
+        const [risk, confidence, reasoning] = await Promise.all([
+            Promise.resolve(this.calculateRisk(opp)),
+            Promise.resolve(this.calculateConfidence(opp, portfolio, signals, memories)),
+            this.generateReasoning(opp, portfolio, signals, mode),
+        ]);
 
-            if (!inToken || !outToken) return null;
-
-            const ratio = inToken.price / outToken.price;
-            const estimatedOut = (ratio * opp.percent).toFixed(6);
-            const priceImpact = opp.percent > 30 ? '~0.5%' : '~0.1%';
-
-            return {
-                amountOut: `${estimatedOut} ${opp.tokenOut}`,
-                priceImpact,
-                route: `${opp.tokenIn} → ${opp.tokenOut} (Uniswap V3)`,
-            };
-        } catch {
-            return null;
-        }
+        return {
+            tokenIn: opp.tokenIn,
+            tokenOut: opp.tokenOut,
+            percent: opp.percent,
+            impact: `${opp.percent}% of your ${opp.tokenIn} holdings`,
+            risk,
+            confidence,
+            reasoning,
+        };
     }
 
-    // ─── Step 5: Confidence engine ─────────────────────────────────────────
+    // ─── Step 7: Risk ──────────────────────────────────────────────────────
+
+    private calculateRisk(opp: Opportunity): Risk {
+        if (STABLES.has(opp.tokenOut)) return 'low';
+        const sizeRisk: Risk = opp.percent >= 30 ? 'high' : opp.percent >= 15 ? 'medium' : 'low';
+        if (CORE_ASSETS.includes(opp.tokenOut)) return sizeRisk === 'high' ? 'medium' : sizeRisk;
+        return 'high';
+    }
+
+    // ─── Step 8: Confidence ────────────────────────────────────────────────
 
     private calculateConfidence(
         opp: Opportunity,
-        portfolio: PortfolioSnapshot,
+        portfolio: Portfolio,
         signals: any,
         memories: AgentMemory[],
     ): number {
-        const portfolioScore = this.portfolioScore(opp, portfolio);
-        const marketScore = this.marketScore(signals);
-        const onchainScore = this.onchainScore(opp, signals);
-        const memoryBoost = this.memoryBoost(opp, memories);
+        const tokenIn = portfolio.tokens.find((t) => t.symbol === opp.tokenIn);
+        const imbalance = tokenIn ? Math.min((tokenIn.allocationPercent / 40) * 80, 90) : 50;
+        const sentiment = signals?.data?.sentiment?.score ?? 50;
+        const market    = sentiment >= 60 ? 80 : sentiment >= 40 ? 60 : 40;
+        const flow      = signals?.data?.flows?.ETH;
+        const onchain   = flow ? (flow.inflow > flow.outflow ? 80 : 40) : 55;
+        const past      = memories.filter((m) => (m.decision as any)?.tokenOut === opp.tokenOut).length;
+        const boost     = past >= 3 ? 10 : past >= 1 ? 5 : 0;
 
-        const raw = portfolioScore * 0.3 + marketScore * 0.3 + onchainScore * 0.4 + memoryBoost;
-        return Math.round(Math.min(Math.max(raw, 40), 95));
+        const raw = imbalance * 0.3 + market * 0.3 + onchain * 0.4 + boost;
+        return Math.round(Math.min(Math.max(raw, 55), 95));
     }
 
-    private portfolioScore(opp: Opportunity, portfolio: PortfolioSnapshot): number {
-        const pct = (sym: string) =>
-            portfolio.tokens.find((t) => t.symbol === sym)?.allocationPercent ?? 0;
+    // ─── Step 9: Insight ───────────────────────────────────────────────────
 
-        if (opp.tokenIn === 'ETH' && pct('ETH') >= 40) return 80;
-        if (opp.tokenIn === 'USDC' && pct('USDC') >= 10) return 85;
-        if (opp.tokenIn === 'SOL' && pct('SOL') >= 10) return 70;
-        return 50;
+    private buildInsight(portfolio: Portfolio, signals: any): string {
+        const top       = portfolio.tokens[0];
+        const sentiment = signals?.data?.sentiment?.label ?? 'Neutral';
+
+        if (!top) return `Market sentiment is ${sentiment}. No priceable holdings found — consider adding ETH or BTC.`;
+
+        if (top.allocationPercent >= 40) {
+            return `You are overexposed to ${top.symbol} (${top.allocationPercent}%). Consider diversifying to reduce concentration risk.`;
+        }
+
+        const stableAlloc = portfolio.tokens
+            .filter((t) => STABLES.has(t.symbol))
+            .reduce((s, t) => s + t.allocationPercent, 0);
+
+        if (stableAlloc >= 50) {
+            return `You have high stablecoin allocation (${stableAlloc.toFixed(0)}%). Consider deploying some capital into growth assets.`;
+        }
+
+        return `Your portfolio is moderately diversified. Market sentiment is ${sentiment}.`;
     }
 
-    private marketScore(signals: any): number {
-        const score = signals?.data?.sentiment?.score ?? 50;
-        if (score >= 60) return 80;
-        if (score >= 40) return 60;
-        return 40;
-    }
+    // ─── Step 10: Reasoning ────────────────────────────────────────────────
 
-    private onchainScore(opp: Opportunity, signals: any): number {
-        const flows = signals?.data?.flows ?? {};
-        const outTokenFlow = flows[opp.tokenOut];
-
-        if (!outTokenFlow) return 55;
-
-        const netInflow = outTokenFlow.inflow - outTokenFlow.outflow;
-        if (netInflow > 0) return 80;
-        if (netInflow < 0) return 35;
-        return 55;
-    }
-
-    private memoryBoost(opp: Opportunity, memories: AgentMemory[]): number {
-        const pastTrades = memories.filter(
-            (m) => (m.decision as any)?.tokenOut === opp.tokenOut,
-        );
-        if (pastTrades.length >= 3) return 10;
-        if (pastTrades.length >= 1) return 5;
-        return 0;
-    }
-
-    // ─── Step 6: Risk calculation ──────────────────────────────────────────
-
-    private calculateRisk(opp: Opportunity, portfolio: PortfolioSnapshot): Risk {
-        const tokenRisk = TOKEN_VOLATILITY[opp.tokenOut] ?? 'medium';
-        const exposureRisk = opp.percent >= 30 ? 'high' : opp.percent >= 15 ? 'medium' : 'low';
-
-        const riskMap: Record<string, Record<string, Risk>> = {
-            low: { low: 'low', medium: 'low', high: 'medium' },
-            medium: { low: 'low', medium: 'medium', high: 'high' },
-            high: { low: 'medium', medium: 'high', high: 'high' },
-        };
-
-        return riskMap[tokenRisk]?.[exposureRisk] ?? 'medium';
-    }
-
-    // ─── Step 7: AI Reasoning ─────────────────────────────────────────────
-
-    private async generateReasoning(
-        opp: Opportunity,
-        portfolio: PortfolioSnapshot,
-        signals: any,
-        mode: Mode,
-    ): Promise<string> {
+    private async generateReasoning(opp: Opportunity, portfolio: Portfolio, signals: any, mode: Mode): Promise<string> {
         const apiKey = process.env.OPENAI_API_KEY?.trim();
-        const fallback = this.buildReasoningFallback(opp, portfolio, mode);
-
+        const fallback = this.buildFallback(opp, mode);
         if (!apiKey) return fallback;
 
         const top = portfolio.tokens.slice(0, 3).map((t) => `${t.symbol} ${t.allocationPercent}%`).join(', ');
-
-        const prompt = `You are a crypto swap advisor. In 2-3 sentences, explain why swapping ${opp.percent}% of ${opp.tokenIn} into ${opp.tokenOut} makes sense.
-                Context: Portfolio top holdings: ${top}, sentiment=${signals?.data?.sentiment?.label ?? 'Neutral'}, mode=${mode}.
-                Mention risk clearly. Be concise.`;
+        const prompt = `You are a crypto swap advisor. In 2-3 sentences, explain why swapping ${opp.percent}% of ${opp.tokenIn} into ${opp.tokenOut} makes sense. Context: top holdings: ${top}, sentiment=${signals?.data?.sentiment?.label ?? 'Neutral'}, mode=${mode}. Mention risk. Be concise.`;
 
         try {
             const res = await fetch('https://api.openai.com/v1/responses', {
@@ -371,32 +384,21 @@ export class SwapIntelligenceProService {
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
                 body: JSON.stringify({ model: 'gpt-4.1-mini', input: prompt, temperature: 0.4 }),
             });
-
             if (!res.ok) return fallback;
-
             const data = await res.json();
-            const text = data?.output?.[0]?.content?.[0]?.text?.trim();
-            return text || fallback;
+            return data?.output?.[0]?.content?.[0]?.text?.trim() || fallback;
         } catch {
             return fallback;
         }
     }
 
-    private buildReasoningFallback(opp: Opportunity, portfolio: PortfolioSnapshot, mode: Mode): string {
-        const modeLabel = mode === 'conservative' ? 'a careful' : mode === 'aggressive' ? 'an aggressive' : 'a balanced';
-        return `Based on your current portfolio allocation, swapping ${opp.percent}% of ${opp.tokenIn} to ${opp.tokenOut} represents ${modeLabel} rebalancing move. This reduces concentration risk and aligns with current market signals. Review carefully before acting.`;
+    private buildFallback(opp: Opportunity, mode: Mode): string {
+        const m = mode === 'conservative' ? 'a careful' : mode === 'aggressive' ? 'an aggressive' : 'a balanced';
+        const isCore = CORE_ASSETS.includes(opp.tokenOut);
+        return `Swapping ${opp.percent}% of ${opp.tokenIn} into ${opp.tokenOut} is ${m} rebalancing move that reduces concentration risk.${isCore ? ` ${opp.tokenOut} offers strong liquidity and market depth.` : ''} Review carefully before acting.`;
     }
 
-    // ─── Step 8: Insight summary ───────────────────────────────────────────
-
-    private buildInsight(portfolio: PortfolioSnapshot, signals: any, mode: Mode): string {
-        const label = signals?.data?.sentiment?.label ?? 'Neutral';
-        const top = portfolio.tokens[0];
-        const dominantLabel = top ? `${top.symbol}-heavy (${top.allocationPercent}%)` : 'diversified';
-        return `Market sentiment is ${label}. Your portfolio is ${dominantLabel}. Running in ${mode} mode.`;
-    }
-
-    // ─── Redis helpers ─────────────────────────────────────────────────────
+    // ─── Redis ─────────────────────────────────────────────────────────────
 
     private async getCache<T>(key: string): Promise<T | null> {
         const raw = await this.redis.get(key);

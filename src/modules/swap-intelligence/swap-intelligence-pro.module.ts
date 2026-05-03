@@ -4,19 +4,18 @@ import { JwtModule } from '@nestjs/jwt';
 import { SwapIntelligenceProService } from './swap-intelligence-pro.service';
 import { SwapIntelligenceProController } from './swap-intelligence-pro.controller';
 import { AgentMemory } from 'src/database/entities/agent-memory.entity';
+import { User } from 'src/database/entities/user.entity';
 import { OnchainModule } from '../onchain/onchain.module';
-import { WalletIntelligenceModule } from '../wallet-intelligence/wallet-intelligence.module';
 import { AuthModule } from '../auth/auth.module';
-import { WalletModule } from '../wallet/wallet.module';
+import { Web3Module } from 'src/config/web3.module';
 
 @Module({
     imports: [
-        TypeOrmModule.forFeature([AgentMemory]),
+        TypeOrmModule.forFeature([AgentMemory, User]),
         JwtModule.register({}),
         AuthModule,
         OnchainModule,
-        WalletModule,
-        WalletIntelligenceModule,
+        Web3Module,
     ],
     controllers: [SwapIntelligenceProController],
     providers: [SwapIntelligenceProService],
