@@ -7,13 +7,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthModule } from '../auth/auth.module';
 import { Web3Module } from 'src/config/web3.module';
+import { PriceModule } from '../price/price.module';
 
 @Module({
   imports: [
       TypeOrmModule.forFeature([User, WalletAnalysis]),
       JwtModule.register({}),
       AuthModule,
-      Web3Module
+      Web3Module,
+      PriceModule
     ],
   controllers: [WalletIntelligenceController],
   providers: [WalletIntelligenceService],

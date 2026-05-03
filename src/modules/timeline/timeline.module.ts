@@ -12,6 +12,7 @@ import { TimelineController } from './timeline.controller';
 import { TimelineService } from './timeline.service';
 import { AuthModule } from '../auth/auth.module';
 import { JwtModule } from '@nestjs/jwt';
+import { PriceModule } from '../price/price.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { JwtModule } from '@nestjs/jwt';
     WalletIntelligenceModule,
     WalletRecommendationsModule,
     OnchainModule,
+    PriceModule
   ],
   controllers: [TimelineController],
   providers: [TimelineService],

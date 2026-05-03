@@ -13,6 +13,7 @@ import Redis from 'ioredis';
 import { User } from '../../database/entities/user.entity';
 import { Web3Service } from '../../config/web3.service';
 import { AssetTransfersCategory } from '../../common/constants/constants';
+import { PriceService } from '../price/price.service';
 
 type NormalizedTransfer = {
     token: string;
@@ -70,6 +71,7 @@ export class WalletIntelligenceService {
         private readonly userRepository: Repository<User>,
         private readonly web3Service: Web3Service,
         @Inject('REDIS_CLIENT') private readonly redis: Redis,
+        private readonly priceService: PriceService,
     ) { }
 
     async getWalletIntelligence(userId: string) {
@@ -560,7 +562,7 @@ export class WalletIntelligenceService {
         const ethQty = Number(ethWei) / 1e18;
         if (ethQty > 0) symbols.push('ETH');
 
-        const priceMap = await this.getPricesUsd(symbols);
+        const priceMap = await this.priceService.getPrices(symbols);
 
         const rows: Array<{ symbol: string; valueUsd: number }> = [];
 

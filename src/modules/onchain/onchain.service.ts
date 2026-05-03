@@ -3,6 +3,7 @@ import Redis from 'ioredis';
 import { Web3Service } from '../../config/web3.service';
 import { AssetTransfersCategory } from '../../common/constants/constants';
 import { SortingOrder } from 'alchemy-sdk';
+import { PriceService } from '../price/price.service';
 
 type Impact = 'high' | 'medium';
 
@@ -69,6 +70,7 @@ export class OnchainService {
     constructor(
         private readonly web3Service: Web3Service,
         @Inject('REDIS_CLIENT') private readonly redis: Redis,
+        private readonly priceService: PriceService,
     ) { }
 
     async getOnchainSignals(): Promise<OnchainSignalsResponse> {
@@ -119,7 +121,7 @@ export class OnchainService {
         const transfers = res.transfers ?? [];
         if (!transfers.length) return [];
 
-        const priceMap = await this.getUsdPrices(['ETH', 'BTC', 'WBTC', 'USDC', 'USDT', 'DAI']);
+        const priceMap = await this.priceService.getPrices(['ETH', 'BTC', 'WBTC', 'USDC', 'USDT', 'DAI']);
 
         const scored = transfers
             .map((t: any) => {
@@ -246,7 +248,7 @@ export class OnchainService {
         const transfers = res.transfers ?? [];
         if (!transfers.length) return [];
 
-        const priceMap = await this.getUsdPrices(['ETH', 'BTC', 'WBTC', 'USDC', 'USDT', 'DAI', 'ARB', 'SOL']);
+        const priceMap = await this.priceService.getPrices(['ETH', 'BTC', 'WBTC', 'USDC', 'USDT', 'DAI', 'ARB', 'SOL']);
 
         const incomingByWallet = new Map<string, { usd: number; token: string }>();
 
@@ -302,7 +304,7 @@ export class OnchainService {
         if (!transfers.length) return this.emptyFlows();
 
         const flows = this.emptyFlows();
-        const priceMap = await this.getUsdPrices(['ETH', 'BTC', 'WBTC', 'SOL', 'ARB']);
+        const priceMap = await this.priceService.getPrices(['ETH', 'BTC', 'WBTC', 'SOL', 'ARB']);
 
         for (const t of transfers) {
             const token = this.normalizeTokenKey(String(t?.asset ?? 'ETH').toUpperCase());

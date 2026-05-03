@@ -6,6 +6,7 @@ import { Web3Service } from 'src/config/web3.service';
 import { User } from 'src/database/entities/user.entity';
 import { AgentMemory } from 'src/database/entities/agent-memory.entity';
 import { OnchainService } from '../onchain/onchain.service';
+import { PriceService } from '../price/price.service';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -81,6 +82,7 @@ export class SwapIntelligenceProService {
         @InjectRepository(User) private readonly userRepo: Repository<User>,
         @InjectRepository(AgentMemory) private readonly agentMemoryRepo: Repository<AgentMemory>,
         @Inject('REDIS_CLIENT') private readonly redis: Redis,
+        private readonly priceService: PriceService,
     ) {}
 
     // ─── Main entry ────────────────────────────────────────────────────────
@@ -184,7 +186,7 @@ export class SwapIntelligenceProService {
 
     private async priceTokens(tokens: NormalizedToken[]): Promise<PricedToken[]> {
         const symbols = [...new Set(tokens.map((t) => t.symbol))];
-        const priceMap = await this.fetchCoinGeckoPrices(symbols);
+        const priceMap = await this.priceService.getPrices(symbols);
         return tokens.map((t) => ({
             ...t,
             priceUsd: priceMap[t.symbol] ?? 0,
